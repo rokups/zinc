@@ -1,0 +1,47 @@
+#
+# MIT License
+#
+# Copyright (c) 2017 Rokas Kupstys
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+cmake_minimum_required(VERSION 3.4)
+project(zinc)
+
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+set (SOURCE_FILES sha1.c sha1.h zinc.cpp zinc.h RollingChecksum.hpp Utilities.hpp)
+
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_definitions (-DRR_DEBUG=1)
+endif ()
+add_definitions(-DZINC_FNV=1)
+
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_compile_options(-O2)
+endif ()
+
+add_library (libzinc STATIC ${SOURCE_FILES})
+
+add_executable (zinc main.cpp)
+target_link_libraries (zinc libzinc)
+
+option (RR_TESTS "Build and run tests" ON)
+if (RR_TESTS)
+    add_subdirectory(tests)
+endif()
