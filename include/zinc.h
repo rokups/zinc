@@ -1,4 +1,3 @@
-#pragma once
 /**
  * MIT License
  *
@@ -39,10 +38,11 @@
     >>>     // Download `block_size` number of remote file bytes starting at `block_index * block_size` position.
     >>>     return data;
     >>> }
-    >>> patch_file(local_file_data, local_file_size, block_size, delta, get_data_cb, user_data)
+    >>> patch_file_mem(local_file_data, local_file_size, block_size, delta, get_data_cb, user_data)
 
     # 5. Truncate local file size to that of a remote file.
 */
+#pragma once
 
 #include <map>
 #include <vector>
@@ -52,37 +52,44 @@
 namespace zinc
 {
 
-struct StrongHash
-{
 #ifdef ZINC_FNV
-    uint64_t _data;
+    typedef uint64_t StrongHash;
 #else
-    uint8_t _data[20];
+    typedef uint8_t StrongHash[20];
 #endif
-};
+typedef uint32_t WeakHash;
 
 struct BlockHashes
 {
-    uint32_t index;
-    uint32_t weak;
+    WeakHash weak;
     StrongHash strong;
 };
 
-typedef std::vector<size_t>         DeltaMap;
-typedef std::vector<uint8_t>        ByteArray;
-typedef std::vector<BlockHashes>    RemoteFileHashList;
+typedef std::vector<uint8_t>                                            ByteArray;
+/// A list of offsets of currenty present data in not yet updated file. -1 value signifies a missing block.
+typedef std::vector<size_t>                                             DeltaMap;
+/// Strong and weak hashes for each block.
+typedef std::vector<BlockHashes>                                        RemoteFileHashList;
+/// A callback that should obtain block data at specified index and return it.
 typedef std::function<ByteArray(size_t block_index, size_t block_size)> FetchBlockCallback;
+/// A callback for reporting progress. Return true if patching should continue, false if patching should terminate.
+typedef std::function<bool(size_t bytes_done_now,
+                           size_t bytes_done_total, size_t file_size)>  ProgressCallback;
 
 
-RemoteFileHashList get_block_checksums(void* file_data, size_t file_size, size_t block_size);
+RemoteFileHashList get_block_checksums_mem(void *file_data, size_t file_size, size_t block_size);
 RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size);
 
-DeltaMap get_differences_delta(const void* file_data, size_t file_size, size_t block_size, const RemoteFileHashList& hashes);
-DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes);
+DeltaMap get_differences_delta_mem(const void *file_data, size_t file_size, size_t block_size,
+                                   const RemoteFileHashList &hashes, ProgressCallback report_progress=ProgressCallback());
+DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
+                               ProgressCallback report_progress=ProgressCallback());
 
-// `file_data` must be at least as big as remote data block.
-bool patch_file(void* file_data, size_t file_size, size_t block_size, DeltaMap& delta, FetchBlockCallback get_data);
-// Caller must truncate `file_path` file to appropriate size.
-bool patch_file(const char* file_path, size_t block_size, DeltaMap& delta, FetchBlockCallback get_data);
+/// `file_data` must be at least as big as remote data block.
+bool patch_file_mem(void *file_data, size_t file_size, size_t block_size, DeltaMap &delta, FetchBlockCallback get_data,
+                    ProgressCallback report_progress=ProgressCallback());
+/// Patch file and truncate it to `file_final_size`.
+bool patch_file(const char* file_path, size_t file_final_size, size_t block_size, DeltaMap& delta,
+                FetchBlockCallback get_data, ProgressCallback report_progress=ProgressCallback());
 
 };

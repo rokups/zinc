@@ -24,7 +24,7 @@
 #define BOOST_TEST_DYN_LINK
 #define BOOST_TEST_MODULE "CommonTests"
 #include <boost/test/unit_test.hpp>
-#include "../zinc.h"
+#include <zinc.h>
 #include <cstdlib>
 using namespace std::placeholders;
 using namespace zinc;
@@ -61,14 +61,15 @@ bool data_sync_test(const char* remote, const char* local)
     ByteArray data_remote = string_to_array(remote);
     ByteArray data_local = string_to_array(local);
 
-    auto checksums = get_block_checksums(&data_remote.front(), data_remote.size(), block_size);
-    auto delta = get_differences_delta(&data_local.front(), data_local.size(), block_size, checksums);
-
     // Ensure local data has enough bytes for remote data
-    if (data_local.size() < data_remote.size())
-        data_local.resize(data_remote.size());
+    auto local_file_size = std::max(data_local.size(), data_remote.size());
+    if (auto remainder = local_file_size % block_size)
+        local_file_size += block_size - remainder;
+    data_local.resize(local_file_size, 0);
 
-    patch_file(&data_local.front(), data_local.size(), block_size, delta, std::bind(get_data, _1, _2, &data_remote));
+    auto checksums = get_block_checksums_mem(&data_remote.front(), data_remote.size(), block_size);
+    auto delta = get_differences_delta_mem(&data_local.front(), data_local.size(), block_size, checksums);
+    patch_file_mem(&data_local.front(), data_local.size(), block_size, delta, std::bind(get_data, _1, _2, &data_remote));
 
     // Ensure local data does not have more bytes than remote data
     if (data_local.size() > data_remote.size())

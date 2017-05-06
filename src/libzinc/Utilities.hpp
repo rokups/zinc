@@ -23,28 +23,28 @@
  */
 #pragma once
 
-
+#include <fcntl.h>
+#include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 
 namespace zinc
 {
 
-class FileMapping
+class FileMemoryMap
 {
 public:
-    FileMapping() { }
+    FileMemoryMap() { }
+    ~FileMemoryMap() { close(); }
 
-    ~FileMapping() { close(); }
-
+    /// Get pointer to mapped memory.
     void* get_data() { return _data; }
-
+    /// Get size of mapped memory.
     size_t get_size() { return _size; }
-
-    bool is_valid() { return _size > 0 && _fd != -1 && _data != (void*)-1; }
-
-    bool open(const char* file_path)
+    /// Verify if file mapping is open.
+    bool is_open() { return _size > 0 && _fd != -1 && _data != (void*)-1; }
+    /// Map file to memory. If block_size is not 0 then mapped memory segment size will be multiple of block_size.
+    bool open(const char* file_path, size_t block_size=0)
     {
         struct stat st = {};
         _fd = ::open(file_path, O_RDWR);
@@ -56,6 +56,15 @@ public:
             return false;//"FileMapping could not get file size");
 
         _size = (size_t)st.st_size;
+        if (block_size)
+        {
+            if (auto remainder = _size % block_size)
+            {
+                auto add_len = block_size - remainder;
+                fallocate(_fd, 0, _size, add_len);
+                _size += add_len;
+            }
+        }
 
         _data = mmap(0, _size, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
         if (_data == (void*)-1)
@@ -63,7 +72,7 @@ public:
 
         return true;
     }
-
+    /// Close memory mapping.
     void close()
     {
         if (_data != (void*)-1)
@@ -80,8 +89,11 @@ public:
     }
 
 protected:
+    /// Size of mapped file.
     size_t _size = 0;
+    /// Memory of mapped file.
     void* _data = (void*)-1;
+    /// Memory mapping file descriptor.
     int _fd = -1;
 };
 

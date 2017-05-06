@@ -21,57 +21,30 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#pragma once
+#include <zinc.h>
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+#include <pybind11/stl_bind.h>
 
-namespace zinc
+namespace py = pybind11;
+using namespace zinc;
+
+PYBIND11_PLUGIN(pyzinc)
 {
+    py::module m("pyzinc", "Python bindings for zinc");
 
-class RollingChecksum
-{
-    uint32_t _a = 0;
-    uint32_t _b = 0;
-    size_t _count = 0;
+    py::class_<BlockHashes>(m, "BlockHashes")
+            .def_readonly("weak", &BlockHashes::weak)
+            .def_readonly("strong", &BlockHashes::strong);
+    py::bind_vector<RemoteFileHashList>(m, "RemoteFileHashList");
+    py::bind_vector<DeltaMap>(m, "DeltaMap");
 
-public:
-    inline RollingChecksum(const void* data = 0, size_t dlen = 0)
-    {
-        update(data, dlen);
-    }
+    m.def("get_block_checksums", &get_block_checksums, "");
+    m.def("get_block_checksums_mem", &get_block_checksums_mem, "");
+    m.def("get_differences_delta", &get_differences_delta, "");
+    m.def("get_differences_delta_mem", &get_differences_delta_mem, "");
+    m.def("patch_file", &patch_file, "");
+    m.def("patch_file_mem", &patch_file_mem, "");
 
-    void update(const void* data = 0, size_t dlen = 0)
-    {
-        if (!data || !dlen)
-            return;
-        _count = dlen;
-        uint8_t* d = (uint8_t*)data;
-        for (size_t i = 0; i < dlen; i++)
-        {
-            _a += d[i];
-            _b += (dlen - i) * d[i];
-        }
-    }
-
-    inline uint32_t digest()
-    {
-        return (_b << 16) | _a;
-    }
-
-    inline void rotate(uint8_t out, uint8_t in)
-    {
-        _a -= out - in;
-        _b -= out * _count - _a;
-    }
-
-    inline bool empty() const { return _count == 0; }
-
-    inline size_t count() const { return _count; }
-
-    inline void clear()
-    {
-        _a = 0;
-        _b = 0;
-        _count = 0;
-    }
-};
-
+    return m.ptr();
 }

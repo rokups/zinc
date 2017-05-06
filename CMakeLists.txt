@@ -21,27 +21,17 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-cmake_minimum_required(VERSION 3.4)
+cmake_minimum_required(VERSION 3.1)
 project(zinc)
 
-set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-set (SOURCE_FILES sha1.c sha1.h zinc.cpp zinc.h RollingChecksum.hpp Utilities.hpp)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_definitions (-DRR_DEBUG=1)
-endif ()
-add_definitions(-DZINC_FNV=1)
-
-if (CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_compile_options(-O2)
-endif ()
-
-add_library (libzinc STATIC ${SOURCE_FILES})
-
-add_executable (zinc main.cpp)
-target_link_libraries (zinc libzinc)
+add_subdirectory(external)
+add_subdirectory(src)
 
 option (RR_TESTS "Build and run tests" ON)
-if (RR_TESTS)
+if (ZINC_TESTS)
     add_subdirectory(tests)
 endif()

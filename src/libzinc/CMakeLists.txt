@@ -21,22 +21,16 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-enable_testing()
 
-find_package(Boost COMPONENTS unit_test_framework REQUIRED)
-include_directories (${Boost_INCLUDE_DIRS})
-
-file(GLOB TEST_SRCS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.cpp)
-
-foreach(test_source_file ${TEST_SRCS})
-    get_filename_component (test_name ${test_source_file} NAME_WE)
-    add_executable (${test_name} ${test_source_file})
-    target_link_libraries (${test_name} -lasan ${Boost_LIBRARIES} zinc -lstdc++)
-    target_compile_options(${test_name} PUBLIC -fsanitize=address)
-    set_target_properties (${test_name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-    add_test (
-        NAME ${test_name}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/testBin
-        COMMAND ${CMAKE_CURRENT_BINARY_DIR}/${test_name}
-    )
-endforeach(test_source_file)
+file (GLOB_RECURSE SOURCE_FILES *.c *.cpp *.h *.hpp)
+file (GLOB_RECURSE HEADER_FILES ${zinc_SOURCE_DIR}/include/*.h)
+add_library (zinc STATIC ${SOURCE_FILES} ${HEADER_FILES})
+target_include_directories(zinc
+    PUBLIC ${zinc_SOURCE_DIR}/include
+    INTERNAL ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_options(zinc PUBLIC $<$<COMPILE_LANGUAGE:CXX>:-std=c++11> PRIVATE -fPIC)
+target_compile_definitions(zinc PUBLIC -DZINC_FNV=1)
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions (zinc PUBLIC -DZINC_DEBUG=1)
+endif ()
