@@ -35,8 +35,9 @@
  * based on: http://www.itl.nist.gov/fipspubs/fip180-1.htm
  * implemented by Jun-ichiro itojun Itoh <itojun@itojun.org>
  */
-
-#include <sys/param.h>
+#if !_WIN32
+#	include <sys/param.h>
+#endif
 #include <string.h>
 #include "sha1.h"
 

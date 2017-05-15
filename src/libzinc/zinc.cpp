@@ -24,13 +24,18 @@
 #include "zinc.h"
 #include <cstring>
 #include <algorithm>
-#include <assert.h>
 #include <stdarg.h>
-#include <unordered_map>
-#include <hash_map>
-#include <chrono>
-#include <iostream>
-
+#include <assert.h>
+#include <climits>
+#if __cplusplus >= 201402L
+#   pragma GCC diagnostic push
+#   pragma GCC diagnostic ignored "-Wshift-count-overflow"
+#   include <flat_hash_map.hpp>
+#   pragma GCC diagnostic pop
+#   define USE_SKA_FLAT_HASH_MAP 1
+#else
+#   include <unordered_map>
+#endif
 #ifndef ZINC_FNV
 #   include "sha1.h"
 #endif
@@ -39,6 +44,12 @@
 
 namespace zinc
 {
+
+struct ByteArrayRef
+{
+    size_t refcount;
+    ByteArray data;
+};
 
 inline void ZINC_LOG(const char *format, ...)
 {
@@ -59,7 +70,9 @@ uint64_t fnv1a64(const uint8_t* data, size_t len, uint64_t hash = 0xcbf29ce48422
     for (size_t i = 0; i < len; i++)
     {
         hash = hash ^ data[i];
-        hash = hash * 0x100000001b3;
+//        hash = hash * 0x100000001b3;
+        hash += (hash << 1) + (hash << 4) + (hash << 5) +
+                (hash << 7) + (hash << 8) + (hash << 40);
     }
     return hash;
 }
@@ -95,15 +108,16 @@ bool equals(const StrongHash& a, const StrongHash& b)
 }
 #endif
 
-size_t get_max_blocks(size_t file_size, size_t block_size)
+size_t get_max_blocks(int64_t file_size, size_t block_size)
 {
     auto number_of_blocks = file_size / block_size;
     if ((file_size % block_size) != 0)
         ++number_of_blocks;
-    return number_of_blocks;
+    assert(number_of_blocks < UINT_MAX);
+    return (size_t)number_of_blocks;
 }
 
-RemoteFileHashList get_block_checksums_mem(void *file_data, size_t file_size, size_t block_size)
+RemoteFileHashList get_block_checksums_mem(void *file_data, int64_t file_size, size_t block_size)
 {
     RemoteFileHashList hashes;
     uint8_t* fp = (uint8_t*)file_data;
@@ -131,7 +145,7 @@ RemoteFileHashList get_block_checksums_mem(void *file_data, size_t file_size, si
         BlockHashes h;
         std::vector<uint8_t> block_data;
         block_data.resize(block_size, 0);
-        memcpy(&block_data.front(), fp, last_block_size);
+        memcpy(&block_data.front(), fp, (size_t)last_block_size);
         h.weak = RollingChecksum(&block_data.front(), block_size).digest();
         h.strong = get_strong_hash(&block_data.front(), block_size);
         hashes.push_back(h);
@@ -148,7 +162,7 @@ RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size)
     return RemoteFileHashList();
 }
 
-DeltaMap get_differences_delta_mem(const void *file_data, size_t file_size, size_t block_size,
+DeltaMap get_differences_delta_mem(const void *file_data, int64_t file_size, size_t block_size,
                                    const RemoteFileHashList &hashes, ProgressCallback report_progress)
 {
     if (file_size % block_size)
@@ -158,23 +172,31 @@ DeltaMap get_differences_delta_mem(const void *file_data, size_t file_size, size
     }
 
     DeltaMap delta;
-    delta.resize(hashes.size(), RR_NO_MATCH);
+    delta.reserve(hashes.size());
+    for (size_t i = 0; i < hashes.size(); i++)
+        delta.push_back(DeltaElement(i, RR_NO_MATCH));
+
     // Sort hashes for easier lookup
-    __gnu_cxx::hash_map<WeakHash, std::vector<std::pair<int32_t, const BlockHashes*>>> lookup_table;
-    lookup_table.resize(hashes.size());
-    int32_t block_index = 0;
+#if USE_SKA_FLAT_HASH_MAP
+    ska::flat_hash_map<WeakHash, std::vector<std::pair<int32_t, const BlockHashes*>>> lookup_table;
+    lookup_table.reserve(hashes.size());
+#else
+    std::unordered_map<WeakHash, std::vector<std::pair<int32_t, const BlockHashes*>>> lookup_table;
+#endif
     RollingChecksum weak;
     const uint8_t* fp = (const uint8_t*)file_data;
-    const uint8_t* fp_end = &fp[file_size];
-    const uint8_t* w_start = fp - block_size;
-    const uint8_t* w_end = w_start + block_size;
     size_t last_progress_report = 0;
     size_t bytes_consumed = 0;
+    {
+        int32_t block_index = 0;
+        for (auto it = hashes.begin(); it != hashes.end(); it++)
+        {
+            auto& h = *it;
+            lookup_table[h.weak].push_back(std::make_pair(block_index++, &h));
+        }
+    }
 
-    for (auto& h : hashes)
-        lookup_table[h.weak].push_back(std::make_pair(block_index++, &h));
-
-    auto report_progress_internal = [&]()
+    auto report_progress_internal = [&]() -> bool
     {
         bool continue_ = true;
         if (report_progress)
@@ -189,59 +211,45 @@ DeltaMap get_differences_delta_mem(const void *file_data, size_t file_size, size
         return continue_;
     };
 
-    auto consume_full_block = [&]()
+    const uint8_t* w_start = fp - block_size;
+    for (;bytes_consumed < file_size;)
     {
-        weak.clear();
-        w_start += block_size;
-        w_end = w_start + block_size;
-        weak.update(w_start, block_size);
-        bytes_consumed += block_size;
-        return report_progress_internal();
-    };
+        if (!report_progress_internal())
+            return DeltaMap();
 
-    auto rotate_weak_checksum = [&]()
-    {
-        weak.rotate(*w_start, *w_end);
-        w_start++;
-        w_end = std::min(++w_end, fp_end);
-        bytes_consumed += 1;
-        return report_progress_internal();
-    };
+        size_t current_block_size = (size_t)std::min<int64_t>(block_size, file_size - bytes_consumed);
+        if (weak.isEmpty())
+        {
+            w_start += current_block_size;
+            bytes_consumed += current_block_size;
+            weak.update(w_start, current_block_size);
+        }
+        else
+        {
+            bytes_consumed += 1;
+            weak.rotate(*w_start, w_start[block_size]);
+            ++w_start;
+        }
 
-    consume_full_block();
-
-    while (w_end < fp_end)
-    {
-        auto it = lookup_table.find(weak.digest());
+        auto weak_digest = weak.digest();
+        auto it = lookup_table.find(weak_digest);
         if (it != lookup_table.end())
         {
-            bool found = false;
             auto& block_list = it->second;
-            auto strong_hash = get_strong_hash(w_start, block_size);
-            for (auto& pair : block_list)
+            auto strong_hash = get_strong_hash(w_start, current_block_size);
+            for (auto jt = block_list.begin(); jt != block_list.end(); jt++)
             {
+                auto& pair = *jt;
                 const BlockHashes& h = *pair.second;
                 if (equals(strong_hash, h.strong))
                 {
                     int32_t this_block_index = pair.first;
-                    delta[this_block_index] = w_start - fp;
-                    found = true;
+                    delta[this_block_index].local_offset = w_start - fp;
+                    weak.clear();
                     break;
                 }
             }
-            if (found)
-            {
-                if (!consume_full_block())
-                    return DeltaMap();
-            }
-            else
-            {
-                if (!rotate_weak_checksum())
-                    return DeltaMap();
-            }
         }
-        else if (!rotate_weak_checksum())
-             return DeltaMap();
     }
     return delta;
 }
@@ -250,69 +258,83 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
                                ProgressCallback report_progress)
 {
     FileMemoryMap mapping;
-    if (mapping.open(file_path, block_size))
+    truncate(file_path, round_up_to_multiple(get_file_size(file_path), block_size));
+    if (mapping.open(file_path))
         return get_differences_delta_mem(mapping.get_data(), mapping.get_size(), block_size, hashes, report_progress);
     return DeltaMap();
 }
 
-bool patch_file_mem(void *file_data, size_t file_size, size_t block_size, DeltaMap &delta, FetchBlockCallback get_data,
+bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, DeltaMap &delta, FetchBlockCallback get_data,
                     ProgressCallback report_progress)
 {
-    if (file_size % block_size)
+    if (file_size % block_size || file_size == 0)
     {
         ZINC_LOG("File data must be multiple of a block size.");
         return false;
     }
 
-    uint8_t* fp = (uint8_t*)file_data;
-    size_t block_offset = 0;
-    size_t block_index = 0;
-    std::map<size_t, ByteArray> block_cache;
+    // Offset cache is used for quickly determining if local data is needed anywhere else in local file.
+    std::vector<std::vector<DeltaElement>> offset_cache((unsigned int)(file_size / block_size));
+    for (auto it = delta.begin(); it != delta.end(); it++)
+    {
+        auto& d = *it;
+        auto from_local_offset = d.local_offset;
+        if (from_local_offset != RR_NO_MATCH)
+            offset_cache[from_local_offset / block_size].push_back(d);
+    }
 
-//    for (auto it = delta.begin(); it != delta.end(); ++it)
+    uint8_t* fp = (uint8_t*)file_data;
+#if USE_SKA_FLAT_HASH_MAP
+    ska::flat_hash_map<size_t, ByteArrayRef> block_cache;
+    block_cache.reserve(std::max((size_t)10, delta.size() / 10));
+#else
+    std::unordered_map<size_t, ByteArrayRef> block_cache;
+#endif
     while (delta.size())
     {
-        if (report_progress)
-        {
-            auto consumed_bytes = block_index * block_size;
-            auto consumed_block = block_size;
-            if (consumed_bytes > file_size)
-            {
-                consumed_bytes = file_size;
-                consumed_block = file_size % block_size;
-            }
-            if (!report_progress(consumed_block, consumed_bytes, file_size))
-                return false;
-        }
+        auto block_index = delta.back().block_index;
+        auto block_offset = block_index * block_size;
+        auto from_local_offset = delta.back().local_offset;
+        delta.pop_back();
 
-        auto& from_local_offset = delta.front();
-        // If local file data matches remote file data
+        // Correct data is already in place.
         if (from_local_offset != block_offset)
         {
-            // Cache blocks that will be needed later
-            // TODO: Cache may be filled faster than it's blocks are used. Wise thing to do would be placing cached blocks to their destinations as soon as they are cached.
-            for (auto jt = delta.begin(); jt != delta.end(); ++jt)
+            // This loop checks possibly used data of this block and previous block. This is only valid if we walk delta
+            // from the end backwards.
+            // TODO: Investigate if there is a risk of overcaching, where bigger part of potentially large file ends in the cache instead faster than it is being evicted from it.fu
+            for (auto i = block_index > 0 ? -1 : 0; i < 1; i++)
             {
-                auto need_offset = *jt;
-                if (need_offset != RR_NO_MATCH)
+                auto& subcache = offset_cache[block_index + i];
+                if (!subcache.size())
+                    continue;
+                for (auto it = subcache.begin(); it != subcache.end();)
                 {
-                    if (block_offset <= need_offset && need_offset < (block_offset + block_size))
+                    auto& cacheable = *it;
+                    size_t cacheable_local_offset = cacheable.local_offset;
+                    auto block_cache_it = block_cache.find(cacheable_local_offset);
+                    if (block_cache_it == block_cache.end())
                     {
-                        if (block_cache.find(need_offset) == block_cache.end())
-                        {
-                            ByteArray block(block_size);
-                            memcpy(&block.front(), &fp[need_offset], block_size);
-                            block_cache[need_offset] = std::move(block);
-                            ZINC_LOG("%d offset cached", need_offset);
-                        }
+                        ByteArrayRef block;
+                        block.refcount = 1;
+                        block.data.resize(block_size, 0);
+                        memcpy(&block.data.front(), &fp[cacheable_local_offset], block_size);
+                        block_cache[cacheable_local_offset] = std::move(block);
+                        ZINC_LOG("% 4d offset +cache refcount=1", cacheable_local_offset);
                     }
+                    else
+                    {
+                        ByteArrayRef& cached_block = (*block_cache_it).second;
+                        cached_block.refcount++;
+                        ZINC_LOG("% 4d offset +cache refcount=%d", cacheable_local_offset, cached_block.refcount);
+                    }
+                    it = subcache.erase(it);
                 }
             }
-            ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
             if (from_local_offset == RR_NO_MATCH)
             {
-                ZINC_LOG("%02d block download", block_index);
+                ZINC_LOG("% 4d block  download", block_index);
                 auto data = get_data(block_index, block_size);
                 memcpy(&fp[block_offset], &data.front(), data.size());
             }
@@ -321,54 +343,48 @@ bool patch_file_mem(void *file_data, size_t file_size, size_t block_size, DeltaM
                 auto it_cache = block_cache.find(from_local_offset);
                 if (it_cache != block_cache.end())
                 {   // Use cached block if it exists
-                    auto& data = it_cache->second;
-                    memmove(&fp[block_offset], &data.front(), data.size());
-                    ZINC_LOG("%02d index using cached offset %d", block_index, from_local_offset);
+                    ByteArrayRef& cached_block = it_cache->second;
+                    cached_block.refcount--;
+                    memmove(&fp[block_offset], &cached_block.data.front(), cached_block.data.size());
+                    ZINC_LOG("% 4d index  using cached offset %d", block_index, from_local_offset);
 
                     // Remove block from cache only if delta map does not reference block later
-                    if (std::find(delta.begin() + 1, delta.end(), it_cache->first) == delta.end())
+                    if (cached_block.refcount == 0)
                     {
                         block_cache.erase(it_cache);
-                        ZINC_LOG("removed cached block offset %d", from_local_offset);
+                        ZINC_LOG("% 4d offset -cache", from_local_offset);
                     }
                 }
                 else
                 {   // Copy block from later file position
-                    // Make sure we are not copying from previous file position because it was already overwritten.
-                    // Also source block can not overlap with destination block. This case is handled by caching block.
-                    assert(from_local_offset >= (block_offset + block_size));
                     memmove(&fp[block_offset], &fp[from_local_offset], block_size);
-                    ZINC_LOG("%02d index using file data offset %d", block_index, from_local_offset);
+                    ZINC_LOG("% 4d index  using file data offset %d", block_index, from_local_offset);
                 }
             }
         }
-        else
-            ZINC_LOG("%02d block matches", block_index);
 
-        block_offset += block_size;
-        block_index += 1;
-        // TODO: this is probably inefficient.
-        delta.erase(delta.begin());
+        if (report_progress)
+        {
+            if (!report_progress(block_size, file_size - delta.size() * block_size, file_size))
+                return false;
+        }
     }
+
     return true;
 }
 
-bool patch_file(const char* file_path, size_t file_final_size, size_t block_size, DeltaMap& delta,
+bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
                 FetchBlockCallback get_data, ProgressCallback report_progress)
 {
-    struct stat st = {};
-    if (stat(file_path, &st) == -1)
+    // Local file must be at least as big as remote file and it must be padded to size multiple of block_size.
+    auto max_required_size = std::max<int64_t>(block_size * delta.size(),
+                                      round_up_to_multiple(get_file_size(file_path), block_size));
+    if (truncate(file_path, max_required_size) != 0)
         return false;
 
-    auto max_required_size = block_size * delta.size();
-    if (st.st_size < max_required_size)
-    {
-        if (truncate(file_path, max_required_size) != 0)
-            return false;
-    }
-
     FileMemoryMap mapping;
-    if (!mapping.open(file_path, block_size))
+    truncate(file_path, round_up_to_multiple(get_file_size(file_path), block_size));
+    if (!mapping.open(file_path))
         return false;
 
     if (patch_file_mem(mapping.get_data(), mapping.get_size(), block_size, delta, get_data, report_progress))

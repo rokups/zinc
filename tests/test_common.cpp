@@ -31,15 +31,6 @@ using namespace zinc;
 
 const auto block_size = 5;
 
-
-//ByteArray random_array(int len)
-//{
-//    ByteArray result(len);
-//    for (auto i = 0; i < len; i++)
-//        result[i] = rand() % 0xFF;
-//    return result;
-//}
-
 ByteArray string_to_array(const char* string)
 {
     auto len = strlen(string);

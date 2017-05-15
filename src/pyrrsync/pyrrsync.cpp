@@ -36,6 +36,9 @@ PYBIND11_PLUGIN(pyzinc)
     py::class_<BlockHashes>(m, "BlockHashes")
             .def_readonly("weak", &BlockHashes::weak)
             .def_readonly("strong", &BlockHashes::strong);
+    py::class_<DeltaElement>(m, "DeltaElement")
+            .def_readonly("block_index", &DeltaElement::block_index)
+            .def_readonly("local_offset", &DeltaElement::local_offset);
     py::bind_vector<RemoteFileHashList>(m, "RemoteFileHashList");
     py::bind_vector<DeltaMap>(m, "DeltaMap");
 

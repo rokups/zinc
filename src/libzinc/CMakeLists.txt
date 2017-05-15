@@ -29,8 +29,15 @@ target_include_directories(zinc
     PUBLIC ${zinc_SOURCE_DIR}/include
     INTERNAL ${CMAKE_CURRENT_SOURCE_DIR}
 )
-target_compile_options(zinc PUBLIC $<$<COMPILE_LANGUAGE:CXX>:-std=c++11> PRIVATE -fPIC)
+if (NOT MSVC)
+    target_compile_options(zinc PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-std=c++14>)
+    if (NOT WIN32)
+        # Required for unixes, enabled by default already on mingw.
+        target_compile_options(zinc PRIVATE -fPIC)
+    endif()
+endif ()
 target_compile_definitions(zinc PUBLIC -DZINC_FNV=1)
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions (zinc PUBLIC -DZINC_DEBUG=1)
 endif ()
+target_link_libraries(zinc flat_hash_map)

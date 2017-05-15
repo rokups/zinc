@@ -105,5 +105,6 @@ int main()
         });
         local_data.resize(remote_data_size);
         assert(local_data == remote_data);
+        usleep(15000);
     }
 }

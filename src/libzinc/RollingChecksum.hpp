@@ -28,12 +28,13 @@ namespace zinc
 
 class RollingChecksum
 {
-    uint32_t _a = 0;
-    uint32_t _b = 0;
-    size_t _count = 0;
+    uint32_t _a;
+    uint32_t _b;
+    size_t _count;
 
 public:
     inline RollingChecksum(const void* data = 0, size_t dlen = 0)
+		: _a(0), _b(0), _count(0)
     {
         update(data, dlen);
     }
@@ -46,9 +47,9 @@ public:
         uint8_t* d = (uint8_t*)data;
         for (size_t i = 0; i < dlen; i++)
         {
-            auto byte = *d;
-            _a += d[i];
-            _b += (dlen - i) * d[i];
+            auto byte = d[i];
+            _a += byte;
+            _b += (dlen - i) * byte;
         }
     }
 
@@ -69,6 +70,8 @@ public:
         _b = 0;
         _count = 0;
     }
+
+    inline bool isEmpty() const { return _count == 0; }
 };
 
 }

@@ -31,7 +31,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 add_subdirectory(external)
 add_subdirectory(src)
 
-option (RR_TESTS "Build and run tests" ON)
+option (ZINC_TESTS "Build and run tests" ON)
 if (ZINC_TESTS)
     add_subdirectory(tests)
 endif()

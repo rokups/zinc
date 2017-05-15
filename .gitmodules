@@ -1,3 +1,6 @@
 [submodule "external/pybind11"]
 	path = external/pybind11
 	url = https://github.com/pybind/pybind11.git
+[submodule "external/flat_hash_map"]
+	path = external/flat_hash_map
+	url = https://github.com/skarupke/flat_hash_map.git

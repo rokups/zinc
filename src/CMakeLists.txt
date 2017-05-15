@@ -23,7 +23,7 @@
 # SOFTWARE.
 #
 add_subdirectory(libzinc)
-add_subdirectory(pyzinc)
 if (NOT WIN32)
+    add_subdirectory(pyzinc)
     add_subdirectory(fuzzer)
 endif ()
