@@ -257,9 +257,16 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
                                ProgressCallback report_progress)
 {
     FileMemoryMap mapping;
-    truncate(file_path, round_up_to_multiple(get_file_size(file_path), block_size));
+    auto file_size = get_file_size(file_path);
+    if (file_size <= 0)
+        return DeltaMap();
+
+    if (truncate(file_path, round_up_to_multiple(file_size, block_size)) != 0)
+        return DeltaMap();
+
     if (mapping.open(file_path))
         return get_differences_delta_mem(mapping.get_data(), mapping.get_size(), block_size, hashes, report_progress);
+
     return DeltaMap();
 }
 
@@ -305,6 +312,8 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
             // TODO: Investigate if there is a risk of overcaching, where bigger part of potentially large file ends in the cache instead faster than it is being evicted from it.fu
             for (auto i = 0; i < (block_index > 0 ? 2 : 1); i++)
             {
+                if ((block_index - i) >= offset_cache.size())
+                    continue;
                 auto& subcache = offset_cache[block_index - i];
                 if (!subcache.size())
                     continue;
@@ -393,6 +402,9 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
 bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
                 FetchBlockCallback get_data, ProgressCallback report_progress)
 {
+    if (file_final_size <= 0)
+        return false;
+
     // Local file must be at least as big as remote file and it must be padded to size multiple of block_size.
     auto max_required_size = std::max<int64_t>(block_size * delta.size(),
                                       round_up_to_multiple(get_file_size(file_path), block_size));

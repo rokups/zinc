@@ -147,8 +147,8 @@ int64_t get_file_size(const char *file_path)
     if (_wstat32i64(to_wstring(file_path).c_str(), &st) == 0)
         return st.st_size;
 #else
-    struct stat st = {};
-    if (stat(file_path, &st) == -1)
+    struct stat64 st = {};
+    if (stat64(file_path, &st) == 0)
         return st.st_size;
 #endif
     return -1;
