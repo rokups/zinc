@@ -246,7 +246,6 @@ DeltaMap get_differences_delta_mem(const void *file_data, int64_t file_size, siz
                     int32_t this_block_index = pair.first;
                     delta[this_block_index].local_offset = w_start - fp;
                     weak.clear();
-                    break;
                 }
             }
         }

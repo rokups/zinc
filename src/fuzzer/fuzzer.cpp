@@ -86,7 +86,7 @@ int main()
         size_t remote_data_size = local_data_size + random(-0x50, 0x50);
         size_t block_size = random<size_t>(0x10, 0x100);
         auto local_data = get_random_array(local_data_size);
-        auto remote_data = mix_array(local_data, random(1, 0x20));
+        auto remote_data = mix_array(local_data, random(1, 10));
         remote_data.resize(remote_data_size);
 
         auto hash_list = zinc::get_block_checksums_mem(&remote_data.front(), remote_data_size, block_size);
