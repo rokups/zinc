@@ -275,12 +275,14 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
 
     // Offset cache is used for quickly determining if local data is needed anywhere else in local file.
     std::vector<std::vector<DeltaElement>> offset_cache((unsigned int)(file_size / block_size));
+    size_t block_index = 0;
     for (auto it = delta.begin(); it != delta.end(); it++)
     {
         auto& d = *it;
         auto from_local_offset = d.local_offset;
-        if (from_local_offset != RR_NO_MATCH)
+        if (from_local_offset != RR_NO_MATCH && (block_index * block_size) != from_local_offset)
             offset_cache[from_local_offset / block_size].push_back(d);
+        block_index++;
     }
 
     uint8_t* fp = (uint8_t*)file_data;
@@ -292,10 +294,9 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
 #endif
     while (delta.size())
     {
-        auto block_index = delta.back().block_index;
+        block_index = delta.back().block_index;
         auto block_offset = block_index * block_size;
         auto from_local_offset = delta.back().local_offset;
-        delta.pop_back();
 
         // Correct data is already in place.
         if (from_local_offset != block_offset)
@@ -303,30 +304,34 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
             // This loop checks possibly used data of this block and previous block. This is only valid if we walk delta
             // from the end backwards.
             // TODO: Investigate if there is a risk of overcaching, where bigger part of potentially large file ends in the cache instead faster than it is being evicted from it.fu
-            for (auto i = block_index > 0 ? -1 : 0; i < 1; i++)
+            for (auto i = 0; i < (block_index > 0 ? 2 : 1); i++)
             {
-                auto& subcache = offset_cache[block_index + i];
+                auto& subcache = offset_cache[block_index - i];
                 if (!subcache.size())
                     continue;
                 for (auto it = subcache.begin(); it != subcache.end();)
                 {
                     auto& cacheable = *it;
-                    size_t cacheable_local_offset = cacheable.local_offset;
-                    auto block_cache_it = block_cache.find(cacheable_local_offset);
-                    if (block_cache_it == block_cache.end())
+                    // This loop iteration will handle exact this block we are about to cache, no point in doing that.
+                    if (cacheable.block_index != block_index)
                     {
-                        ByteArrayRef block;
-                        block.refcount = 1;
-                        block.data.resize(block_size, 0);
-                        memcpy(&block.data.front(), &fp[cacheable_local_offset], block_size);
-                        block_cache[cacheable_local_offset] = std::move(block);
-                        ZINC_LOG("% 4d offset +cache refcount=1", cacheable_local_offset);
-                    }
-                    else
-                    {
-                        ByteArrayRef& cached_block = (*block_cache_it).second;
-                        cached_block.refcount++;
-                        ZINC_LOG("% 4d offset +cache refcount=%d", cacheable_local_offset, cached_block.refcount);
+                        size_t cacheable_local_offset = cacheable.local_offset;
+                        auto block_cache_it = block_cache.find(cacheable_local_offset);
+                        if (block_cache_it == block_cache.end())
+                        {
+                            ByteArrayRef block;
+                            block.refcount = 1;
+                            block.data.resize(block_size, 0);
+                            memcpy(&block.data.front(), &fp[cacheable_local_offset], block_size);
+                            block_cache[cacheable_local_offset] = std::move(block);
+                            ZINC_LOG("% 4d offset +cache refcount=1", cacheable_local_offset);
+                        }
+                        else
+                        {
+                            ByteArrayRef &cached_block = (*block_cache_it).second;
+                            cached_block.refcount++;
+                            ZINC_LOG("% 4d offset +cache refcount=%d", cacheable_local_offset, cached_block.refcount);
+                        }
                     }
                     it = subcache.erase(it);
                 }
@@ -359,6 +364,17 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
                 {   // Copy block from later file position
                     memmove(&fp[block_offset], &fp[from_local_offset], block_size);
                     ZINC_LOG("% 4d index  using file data offset %d", block_index, from_local_offset);
+                    auto& subcache = offset_cache[from_local_offset / block_size];
+                    for (auto it = subcache.begin(); it != subcache.end(); it++)
+                    {
+                        auto& cacheable = *it;
+                        if (cacheable.local_offset == from_local_offset)
+                        {
+                            // Delete used offset, but do it only once.f
+                            it = subcache.erase(it);
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -368,6 +384,8 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
             if (!report_progress(block_size, file_size - delta.size() * block_size, file_size))
                 return false;
         }
+
+        delta.pop_back();
     }
 
     return true;
