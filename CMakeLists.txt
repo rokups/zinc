@@ -33,5 +33,6 @@ add_subdirectory(src)
 
 option (ZINC_TESTS "Build and run tests" ON)
 if (ZINC_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif()

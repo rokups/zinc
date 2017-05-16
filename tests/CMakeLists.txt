@@ -23,21 +23,17 @@
 #
 find_package(Boost QUIET COMPONENTS unit_test_framework)
 if (Boost_FOUND)
-    enable_testing()
     include_directories (${Boost_INCLUDE_DIRS})
-
-    file(GLOB TEST_SRCS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.cpp)
-
+    file(GLOB TEST_SRCS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} test_*.cpp)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests)
     foreach (test_source_file ${TEST_SRCS})
         get_filename_component (test_name ${test_source_file} NAME_WE)
-        add_executable (${test_name} ${test_source_file})
+        add_executable (${test_name} ${test_source_file} common.h common.cpp)
         target_link_libraries (${test_name} -lasan ${Boost_LIBRARIES} zinc -lstdc++)
-        target_compile_options(${test_name} PUBLIC -fsanitize=address)
-        set_target_properties (${test_name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-        add_test (
+        target_compile_options(${test_name} PRIVATE -fsanitize=address)
+        add_test(
             NAME ${test_name}
-            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/testBin
-            COMMAND ${CMAKE_CURRENT_BINARY_DIR}/${test_name}
+            COMMAND ${test_name}
         )
     endforeach (test_source_file)
 endif ()

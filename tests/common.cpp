@@ -22,14 +22,12 @@
  * SOFTWARE.
  */
 #define BOOST_TEST_DYN_LINK
-#define BOOST_TEST_MODULE "CommonTests"
 #include <boost/test/unit_test.hpp>
 #include <zinc.h>
 #include <cstdlib>
 using namespace std::placeholders;
 using namespace zinc;
 
-const auto block_size = 5;
 
 ByteArray string_to_array(const char* string)
 {
@@ -47,7 +45,7 @@ ByteArray get_data(size_t block_index, size_t block_size, void* user_data)
     return result;
 }
 
-bool data_sync_test(const char* remote, const char* local)
+bool data_sync_test(const char* remote, const char* local, size_t block_size)
 {
     ByteArray data_remote = string_to_array(remote);
     ByteArray data_local = string_to_array(local);
@@ -67,30 +65,4 @@ bool data_sync_test(const char* remote, const char* local)
         data_local.resize(data_remote.size());
 
     return data_local == data_remote;
-}
-
-BOOST_AUTO_TEST_CASE (common_tests)
-{
-    // Identical data
-    BOOST_CHECK(data_sync_test("abcdefghijklmnopqrstuvwxyz0123456789", "abcdefghijklmnopqrstuvwxyz0123456789"));
-
-    // New data in the front
-    // TODO: NEW_DATA_ length not being multiple of block size causes last block redownload
-    BOOST_CHECK(data_sync_test("NEW_DATA_abcdefghijklmnopqrstuvwxyz0123456789", "abcdefghijklmnopqrstuvwxyz0123456789"));
-    BOOST_CHECK(data_sync_test("_abcdefghijklmnopqrstuvwxyz0123456789", "abcdefghijklmnopqrstuvwxyz0123456789"));
-
-    // New data at the end
-    BOOST_CHECK(data_sync_test("abcdefghijklmnopqrstuvwxyz0123456789_NEW_DATA", "abcdefghijklmnopqrstuvwxyz0123456789"));
-
-    // Data removed from the end
-    BOOST_CHECK(data_sync_test("abcdefghijklmnopqrstuvwxyz0123456789", "abcdefghijklmnopqrstuvwxyz0123456789_NEW_DATA"));
-
-    // Data removed from the front
-    BOOST_CHECK(data_sync_test("abcdefghijklmnopqrstuvwxyz0123456789", "NEW_DATA_abcdefghijklmnopqrstuvwxyz0123456789"));
-
-    // Remote data moved around
-    BOOST_CHECK(data_sync_test("abcdefghijklvwxyz0123mnopqrstu456789", "abcdefghijklmnopqrstuvwxyz0123456789"));
-
-    // Local data moved around
-    BOOST_CHECK(data_sync_test("abcdefghijklmnopqrstuvwxyz0123456789", "abcdefghrstuvwxyz0123ijklmnopq456789"));
 }
