@@ -21,8 +21,35 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-find_package(PythonLibs REQUIRED)
-add_library(pyzinc SHARED pyzinc.cpp)
-target_include_directories(pyzinc PRIVATE ${PYTHON_INCLUDE_DIRS})
-target_link_libraries(pyzinc zinc pybind11 ${PYTHON_LIBRARIES})
-set_target_properties(pyzinc PROPERTIES PREFIX "")
+from Tools.scripts.objgraph import definitions
+
+from setuptools import setup, Extension
+
+cpp_args = ['-std=c++11']
+setup(
+    name='zinc',
+    version='0.0.1',
+    author='Rokas Kupstys',
+    description='Example utility on usage of libzinc',
+    license='MIT',
+    url='https://github.com/rokups/zinc',
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+        'Topic :: Utilities',
+        'License :: OSI Approved :: MIT License',
+    ],
+    scripts=['zinc'],
+    ext_modules=[
+        Extension(
+            'pyzinc',
+            ['pyzinc.cpp', '../libzinc/zinc.cpp', '../libzinc/sha1.c', '../libzinc/Utilities.cpp'],
+            include_dirs=[
+                '../../include',
+                '../../external/pybind11/include'
+            ],
+            define_macros=[('ZINC_FNV', '1')],
+            language='c++',
+            extra_compile_args=cpp_args,
+        ),
+    ],
+)

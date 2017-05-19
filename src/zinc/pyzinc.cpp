@@ -25,6 +25,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>
+#include <pybind11/functional.h>
 
 namespace py = pybind11;
 using namespace zinc;
@@ -34,13 +35,15 @@ PYBIND11_PLUGIN(pyzinc)
     py::module m("pyzinc", "Python bindings for zinc");
 
     py::class_<BlockHashes>(m, "BlockHashes")
-            .def_readonly("weak", &BlockHashes::weak)
-            .def_readonly("strong", &BlockHashes::strong);
+        .def(py::init<WeakHash, StrongHash>())
+        .def_readonly("weak", &BlockHashes::weak)
+        .def_readonly("strong", &BlockHashes::strong);
     py::class_<DeltaElement>(m, "DeltaElement")
-            .def_readonly("block_index", &DeltaElement::block_index)
-            .def_readonly("local_offset", &DeltaElement::local_offset);
+        .def_readonly("block_index", &DeltaElement::block_index)
+        .def_readonly("local_offset", &DeltaElement::local_offset);
     py::bind_vector<RemoteFileHashList>(m, "RemoteFileHashList");
     py::bind_vector<DeltaMap>(m, "DeltaMap");
+    py::bind_vector<ByteArray>(m, "ByteArray");
 
     m.def("get_block_checksums", &get_block_checksums, "");
     m.def("get_block_checksums_mem", &get_block_checksums_mem, "");
