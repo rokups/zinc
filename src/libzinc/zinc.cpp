@@ -171,7 +171,7 @@ size_t get_max_blocks(int64_t file_size, size_t block_size)
     return (size_t)number_of_blocks;
 }
 
-RemoteFileHashList get_block_checksums_mem(void *file_data, int64_t file_size, size_t block_size)
+RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size, size_t block_size)
 {
     RemoteFileHashList hashes;
     uint8_t* fp = (uint8_t*)file_data;
@@ -215,12 +215,12 @@ RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size)
 {
     FileMemoryMap mapping;
     if (mapping.open(file_path))
-        return get_block_checksums_mem(mapping.get_data(), mapping.get_size(), block_size);
+        return get_block_checksums(mapping.get_data(), mapping.get_size(), block_size);
     return RemoteFileHashList();
 }
 
-DeltaMap get_differences_delta_mem(const void* file_data, int64_t file_size, size_t block_size,
-                                   const RemoteFileHashList& hashes, const ProgressCallback& report_progress)
+DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
+                               const RemoteFileHashList& hashes, const ProgressCallback& report_progress)
 {
     if (file_size % block_size)
     {
@@ -329,12 +329,11 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
             return DeltaMap();
         mapping.open(file_path);
     }
-    return get_differences_delta_mem(mapping.get_data(), mapping.get_size(), block_size, hashes, report_progress);
+    return get_differences_delta(mapping.get_data(), mapping.get_size(), block_size, hashes, report_progress);
 }
 
-bool patch_file_mem(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
-                    const FetchBlockCallback& get_data,
-                    const ProgressCallback& report_progress)
+bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
+                const FetchBlockCallback& get_data, const ProgressCallback& report_progress)
 {
     if (file_size % block_size || file_size == 0)
     {
@@ -490,7 +489,7 @@ bool patch_file(const char* file_path, int64_t file_final_size, size_t block_siz
     if (!mapping.open(file_path))
         return false;
 
-    if (patch_file_mem(mapping.get_data(), mapping.get_size(), block_size, delta, get_data, report_progress))
+    if (patch_file(mapping.get_data(), mapping.get_size(), block_size, delta, get_data, report_progress))
     {
         mapping.close();
         return truncate(file_path, file_final_size) == 0;

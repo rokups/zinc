@@ -57,9 +57,9 @@ bool data_sync_test(const char* remote, const char* local, size_t block_size)
         local_file_size += block_size - remainder;
     data_local.resize(local_file_size, 0);
 
-    auto checksums = get_block_checksums_mem(&data_remote.front(), data_remote.size(), block_size);
-    auto delta = get_differences_delta_mem(&data_local.front(), data_local.size(), block_size, checksums);
-    patch_file_mem(&data_local.front(), data_local.size(), block_size, delta, std::bind(get_data, _1, _2, &data_remote));
+    auto checksums = get_block_checksums(&data_remote.front(), data_remote.size(), block_size);
+    auto delta = get_differences_delta(&data_local.front(), data_local.size(), block_size, checksums);
+    patch_file(&data_local.front(), data_local.size(), block_size, delta, std::bind(get_data, _1, _2, &data_remote));
 
     // Ensure local data does not have more bytes than remote data
     if (data_local.size() > data_remote.size())

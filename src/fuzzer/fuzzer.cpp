@@ -91,15 +91,15 @@ int main()
         ByteArray remote_data = mix_array(local_data, random(1, 10));
         remote_data.resize(remote_data_size);
 
-        auto hash_list = zinc::get_block_checksums_mem(&remote_data.front(), remote_data_size, block_size);
+        auto hash_list = zinc::get_block_checksums(&remote_data.front(), remote_data_size, block_size);
 
-        // Memory block must be multiple of block_size when calling get_differences_delta_mem()
+        // Memory block must be multiple of block_size when calling get_differences_delta()
         local_data.resize(next_multiple_of(local_data_size, block_size));
-        auto delta = zinc::get_differences_delta_mem(&local_data.front(), local_data.size(), block_size, hash_list);
+        auto delta = zinc::get_differences_delta(&local_data.front(), local_data.size(), block_size, hash_list);
 
         // Memory block must be multiple of block_size and big enough to accomodate new data.
         local_data.resize(next_multiple_of(std::max(local_data.size(), remote_data.size()), block_size));
-        zinc::patch_file_mem(&local_data.front(), local_data.size(), block_size, delta, [&](size_t block_index, size_t block_size) {
+        zinc::patch_file(&local_data.front(), local_data.size(), block_size, delta, [&](size_t block_index, size_t block_size) {
             ByteArray result;
             auto offset = block_index * block_size;
             auto current_block_size = std::min(remote_data_size - offset, block_size);
