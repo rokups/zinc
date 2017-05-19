@@ -149,16 +149,16 @@ BlockHashes::BlockHashes()
     weak = 0;
 }
 
-BlockHashes::BlockHashes(const WeakHash& weak_, const StrongHash& strong_)
+BlockHashes::BlockHashes(const WeakHash& weak, const StrongHash& strong)
 {
-    weak = weak_;
-    strong = strong_;
+    this->weak = weak;
+    this->strong = strong;
 }
 
-BlockHashes::BlockHashes(const WeakHash& weak_, const std::string& strong_)
+BlockHashes::BlockHashes(const WeakHash& weak, const std::string& strong)
 {
-    weak = weak_;
-    strong = StrongHash(strong_);
+    this->weak = weak;
+    this->strong = StrongHash(strong);
 }
 
 

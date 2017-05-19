@@ -58,8 +58,8 @@ protected:
 struct BlockHashes
 {
     BlockHashes();
-	BlockHashes(const WeakHash& weak_, const StrongHash& strong_);
-	BlockHashes(const WeakHash& weak_, const std::string& strong_);
+	BlockHashes(const WeakHash& weak, const StrongHash& strong);
+	BlockHashes(const WeakHash& weak, const std::string& strong);
     BlockHashes(const BlockHashes& other) = default;
     BlockHashes& operator=(const BlockHashes& other) = default;
 
@@ -86,20 +86,71 @@ typedef std::function<ByteArray(size_t block_index, size_t block_size)>         
 typedef std::function<bool(int64_t bytes_done_now, int64_t bytes_done_total, int64_t file_size)> ProgressCallback;
 
 
+/*!
+ * Calculates strong and weak checksums for every block in the passed memory.
+ * \param file_data a pointer to a memory block.
+ * \param file_size size of \a file_data memory block. It must be multiple of \a block_size.
+ * \param block_size size of single block.
+ * \return array of \a BlockHashes which contains weak and strong checksums of every block in the file.
+ */
 RemoteFileHashList get_block_checksums_mem(void *file_data, int64_t file_size, size_t block_size);
+/*!
+ * Calculates strong and weak checksums for every block in the passed file.
+ * \param file_path a path to a file.
+ * \param block_size size of single block.
+ * \return array of \a BlockHashes which contains weak and strong checksums of every block in the file.
+ */
 RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size);
 
+/*!
+ * Calculates a delta map defining which blocks of data are to be reused from local files and which are to be downloaded.
+ * \param file_data a pointer to a memory block.
+ * \param file_size size of \a file_data memory block. It must be multiple of \a block_size.
+ * \param block_size size of single block.
+ * \param hashes \a RemoteFileHashList returned by \a get_block_checksums or \a get_block_checksums_mem.
+ * \param report_progress a callback which will be invoked to report progress.
+ * \return \a DeltaMap describing how data should be reused from local file and which blocks should be downloaded.
+ */
 DeltaMap get_differences_delta_mem(const void* file_data, int64_t file_size, size_t block_size,
 								   const RemoteFileHashList& hashes,
 								   const ProgressCallback& report_progress = ProgressCallback());
+/*!
+ * Calculates a delta map defining which blocks of data are to be reused from local files and which are to be downloaded.
+ * \param file_path a path to a file.
+ * \param block_size size of single block.
+ * \param hashes \a RemoteFileHashList returned by \a get_block_checksums or \a get_block_checksums_mem.
+ * \param report_progress a callback which will be invoked to report progress.
+ * \return \a DeltaMap describing how data should be reused from local file and which blocks should be downloaded.
+ */
 DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
 							   const ProgressCallback& report_progress = ProgressCallback());
 
 /// `file_data` must be at least as big as remote data block.
+/*!
+ * Sync a local file to remote one.
+ * \param file_data a memory block with a local file. It must be big enough to contain latest version of file.
+ * \param file_size size of \a file_data memory block. It must be multiple of \a block_size.
+ * \param block_size size of single block.
+ * \param delta \a DeltaMap returned by \a get_differences_delta or \a get_differences_delta_mem.
+ * \param get_data a callback which should return \a block_size size block of data from remote file at
+ * block_index * \a block_size position.
+ * \param report_progress a callback which will be invoked to report progress.
+ * \return if file update was successful.
+ */
 bool patch_file_mem(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
 					const FetchBlockCallback& get_data,
 					const ProgressCallback& report_progress = ProgressCallback());
-/// Patch file and truncate it to `file_final_size`.
+/*!
+ * Sync a local file to remote one.
+ * \param file_path a path to a file.
+ * \param file_final_size size of a remote file. \a file_path will be truncated to this size at the end.
+ * \param block_size size of single block.
+ * \param delta \a DeltaMap returned by \a get_differences_delta or \a get_differences_delta_mem.
+ * \param get_data a callback which should return \a block_size size block of data from remote file at
+ * block_index * \a block_size position.
+ * \param report_progress a callback which will be invoked to report progress.
+ * \return if file update was successful.
+ */
 bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
 				const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());
 
