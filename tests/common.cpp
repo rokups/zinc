@@ -49,6 +49,7 @@ bool data_sync_test(const char* remote, const char* local, size_t block_size)
 {
     ByteArray data_remote = string_to_array(remote);
     ByteArray data_local = string_to_array(local);
+    ByteArray data_local_copy = data_local;
 
     // Ensure local data has enough bytes for remote data
     auto local_file_size = std::max(data_local.size(), data_remote.size());
@@ -64,5 +65,16 @@ bool data_sync_test(const char* remote, const char* local, size_t block_size)
     if (data_local.size() > data_remote.size())
         data_local.resize(data_remote.size());
 
-    return data_local == data_remote;
+    if (data_local != data_remote)
+    {
+        data_local_copy.push_back(0);
+        data_remote.push_back(0);
+        data_local.push_back(0);
+        fprintf(stderr, "Local  data: %s\n", &data_local_copy.front());
+        fprintf(stderr, "Remote data: %s\n", &data_remote.front());
+        fprintf(stderr, "Result data: %s\n", &data_local.front());
+        fprintf(stderr, "Block  size: %d\n", (int)block_size);
+        return false;
+    }
+    return true;
 }
