@@ -34,13 +34,21 @@ PYBIND11_PLUGIN(pyzinc)
 {
     py::module m("pyzinc", "Python bindings for zinc");
 
+    py::class_<StrongHash>(m, "StrongHash")
+        .def(py::init<>())
+        .def(py::init<const void*, size_t>())
+        .def(py::init<const std::string&>())
+        .def("__str__", &StrongHash::to_string);
+
     py::class_<BlockHashes>(m, "BlockHashes")
-        .def(py::init<WeakHash, StrongHash>())
+        .def(py::init<WeakHash, const std::string&>())
         .def_readonly("weak", &BlockHashes::weak)
         .def_readonly("strong", &BlockHashes::strong);
+
     py::class_<DeltaElement>(m, "DeltaElement")
         .def_readonly("block_index", &DeltaElement::block_index)
         .def_readonly("local_offset", &DeltaElement::local_offset);
+
     py::bind_vector<RemoteFileHashList>(m, "RemoteFileHashList");
     py::bind_vector<DeltaMap>(m, "DeltaMap");
     py::bind_vector<ByteArray>(m, "ByteArray");

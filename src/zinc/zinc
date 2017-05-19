@@ -115,7 +115,7 @@ def hash_files(args):
             'sha256': sha256,
             'file_size': file_size,
             'block_size': block_size,
-            'blocks': [(c.weak, c.strong) for c in checksums]
+            'blocks': [(c.weak, str(c.strong)) for c in checksums]
         }, fp, indent=4)
     print('Done')
 
@@ -140,7 +140,7 @@ def sync_files(args):
         ])
 
         def report_progress(bytes_done_now, bytes_done_total, file_size):
-            bar.update(bytes_done_total + 1)
+            bar.update(bytes_done_total)
             return True
 
         def get_data(block_index, block_size):

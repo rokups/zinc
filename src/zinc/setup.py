@@ -21,11 +21,41 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-from Tools.scripts.objgraph import definitions
-
+import sys
 from setuptools import setup, Extension
+from distutils.command.build_ext import build_ext
 
-cpp_args = ['-std=c++11']
+cflags = {
+    'mingw32': [],
+    'unix': []
+}
+lflags = {}
+build_definitions = []
+
+if '--strong-hash-fnv' in sys.argv:
+    sys.argv.remove('--strong-hash-fnv')
+    build_definitions.append(('ZINC_FNV', '1'))
+
+if '--force-cxx11' in sys.argv:
+    sys.argv.remove('--force-cxx11')
+    for compiler in ('mingw32', 'unix'):
+        cflags[compiler].append('-std=c++11')
+else:
+    for compiler in ('mingw32', 'unix'):
+        cflags[compiler].append('-std=c++14')
+
+
+class CompilerBuildFlagManager(build_ext):
+    def build_extensions(self):
+        compiler_type = self.compiler.compiler_type
+        if compiler_type in cflags:
+            for ext in self.extensions:
+                ext.extra_compile_args = cflags[compiler_type]
+        if compiler_type in lflags:
+            for ext in self.extensions:
+                ext.extra_link_args = lflags[compiler_type]
+        build_ext.build_extensions(self)
+
 setup(
     name='zinc',
     version='0.0.1',
@@ -35,8 +65,11 @@ setup(
     url='https://github.com/rokups/zinc',
     classifiers=[
         'Development Status :: 3 - Alpha',
+        'Environment :: Console',
+        'Intended Audience :: Developers',
         'Topic :: Utilities',
         'License :: OSI Approved :: MIT License',
+        'Topic :: Internet :: WWW/HTTP',
     ],
     scripts=['zinc'],
     ext_modules=[
@@ -45,11 +78,12 @@ setup(
             ['pyzinc.cpp', '../libzinc/zinc.cpp', '../libzinc/sha1.c', '../libzinc/Utilities.cpp'],
             include_dirs=[
                 '../../include',
-                '../../external/pybind11/include'
+                '../../external/pybind11/include',
+                '../../external/flat_hash_map'
             ],
-            define_macros=[('ZINC_FNV', '1')],
-            language='c++',
-            extra_compile_args=cpp_args,
+            define_macros=build_definitions,
+            language='c++'
         ),
     ],
+    cmdclass={'build_ext': CompilerBuildFlagManager}
 )

@@ -42,6 +42,7 @@
 #include "RollingChecksum.hpp"
 #include "Utilities.hpp"
 
+
 namespace zinc
 {
 
@@ -64,49 +65,102 @@ inline void ZINC_LOG(const char *format, ...)
 
 const size_t RR_NO_MATCH = (const size_t)-1;
 
-#ifdef ZINC_FNV
-uint64_t fnv1a64(const uint8_t* data, size_t len, uint64_t hash = 0xcbf29ce484222325)
+
+
+
+
+
+StrongHash::StrongHash()
 {
-    for (size_t i = 0; i < len; i++)
+    memset(_data, 0, sizeof(_data));
+}
+
+StrongHash::StrongHash(const void* m, size_t mlen)
+{
+#ifdef ZINC_FNV
+    auto p = (uint8_t*)m;
+    uint64_t hash = 0xcbf29ce484222325;
+    static_assert(sizeof(hash) == sizeof(_data));
+
+    for (size_t i = 0; i < mlen; i++)
     {
-        hash = hash ^ data[i];
+        hash = hash ^ p[i];
 //        hash = hash * 0x100000001b3;
         hash += (hash << 1) + (hash << 4) + (hash << 5) +
                 (hash << 7) + (hash << 8) + (hash << 40);
     }
-    return hash;
-}
-
-uint64_t fnv1a64(const void* data, size_t len, uint64_t hash = 0xcbf29ce484222325)
-{
-    return fnv1a64((uint8_t*)data, len, hash);
-}
-
-StrongHash get_strong_hash(const void* data, size_t len)
-{
-    return fnv1a64(data, len);
-}
-
-bool equals(StrongHash a, StrongHash b)
-{
-    return a == b;
-}
+    memcpy(_data, &hash, sizeof(_data));
 #else
-StrongHash get_strong_hash(const void* data, size_t len)
-{
     StrongHash hash;
     sha1_ctxt sha1;
     sha1_init(&sha1);
-    sha1_loop(&sha1, (const uint8_t*)data, len);
-    sha1_result(&sha1, &hash);
-    return hash;
+    sha1_loop(&sha1, (const uint8_t*)m, mlen);
+    sha1_result(&sha1, _data);
+#endif
 }
 
-bool equals(const StrongHash& a, const StrongHash& b)
+StrongHash::StrongHash(const StrongHash& other)
 {
-    return memcmp(&a, &b, sizeof(a)) == 0;
+    memcpy(_data, other._data, sizeof(_data));
 }
-#endif
+
+StrongHash& StrongHash::operator=(const StrongHash& other)
+{
+    memcpy(_data, other._data, sizeof(_data));
+    return *this;
+}
+
+bool StrongHash::operator==(const StrongHash& other)
+{
+    return memcmp(_data, other._data, sizeof(_data)) == 0;
+}
+
+std::string StrongHash::to_string() const
+{
+    std::string result;
+    result.resize(sizeof(_data) * 2);
+    for (size_t i = 0; i < sizeof(_data); i++)
+        sprintf(&result.front() + i * 2, "%02x", _data[i]);
+    return result;
+}
+
+StrongHash::StrongHash(const std::string& str)
+{
+    if (str.length() < (sizeof(_data) * 2))
+        return;
+
+    char buf[3];
+    for (size_t i = 0; i < sizeof(_data); i++)
+    {
+        memcpy(buf, &str.front() + i * 2, 2);
+        buf[2] = 0;
+        _data[i] = (uint8_t)strtol(buf, 0, 16);
+    }
+}
+
+DeltaElement::DeltaElement(size_t index, size_t offset)
+    : block_index(index)
+    , local_offset(offset)
+{
+}
+
+BlockHashes::BlockHashes()
+{
+    weak = 0;
+}
+
+BlockHashes::BlockHashes(const WeakHash& weak_, const StrongHash& strong_)
+{
+    weak = weak_;
+    strong = strong_;
+}
+
+BlockHashes::BlockHashes(const WeakHash& weak_, const std::string& strong_)
+{
+    weak = weak_;
+    strong = StrongHash(strong_);
+}
+
 
 size_t get_max_blocks(int64_t file_size, size_t block_size)
 {
@@ -138,7 +192,7 @@ RemoteFileHashList get_block_checksums_mem(void *file_data, int64_t file_size, s
     {
         BlockHashes h;
         h.weak = RollingChecksum(fp, block_size).digest();
-        h.strong = get_strong_hash(fp, block_size);
+        h.strong = StrongHash(fp, block_size);
         hashes.push_back(h);
         fp += block_size;
     }
@@ -150,7 +204,7 @@ RemoteFileHashList get_block_checksums_mem(void *file_data, int64_t file_size, s
         block_data.resize(block_size, 0);
         memcpy(&block_data.front(), fp, (size_t)last_block_size);
         h.weak = RollingChecksum(&block_data.front(), block_size).digest();
-        h.strong = get_strong_hash(&block_data.front(), block_size);
+        h.strong = StrongHash(&block_data.front(), block_size);
         hashes.push_back(h);
     }
 
@@ -192,8 +246,8 @@ DeltaMap get_differences_delta_mem(const void* file_data, int64_t file_size, siz
 #endif
     RollingChecksum weak;
     const uint8_t* fp = (const uint8_t*)file_data;
-    size_t last_progress_report = 0;
-    size_t bytes_consumed = 0;
+    int64_t last_progress_report = 0;
+    int64_t bytes_consumed = 0;
     {
         int32_t block_index = 0;
         for (auto it = hashes.begin(); it != hashes.end(); it++)
@@ -208,8 +262,8 @@ DeltaMap get_differences_delta_mem(const void* file_data, int64_t file_size, siz
         bool continue_ = true;
         if (report_progress)
         {
-            size_t bytes_since_last_report = bytes_consumed - last_progress_report;
-            if (bytes_since_last_report >= block_size)
+            int64_t bytes_since_last_report = bytes_consumed - last_progress_report;
+            if (bytes_since_last_report >= (int64_t)block_size)
             {
                 continue_ = report_progress(bytes_since_last_report, bytes_consumed, file_size);
                 last_progress_report = bytes_consumed;
@@ -243,12 +297,12 @@ DeltaMap get_differences_delta_mem(const void* file_data, int64_t file_size, siz
         if (it != lookup_table.end())
         {
             auto& block_list = it->second;
-            auto strong_hash = get_strong_hash(w_start, current_block_size);
+            auto strong_hash = StrongHash(w_start, current_block_size);
             for (auto jt = block_list.begin(); jt != block_list.end(); jt++)
             {
                 auto& pair = *jt;
                 const BlockHashes& h = *pair.second;
-                if (equals(strong_hash, h.strong))
+                if (strong_hash == h.strong)
                 {
                     int32_t this_block_index = pair.first;
                     delta[this_block_index].local_offset = w_start - fp;

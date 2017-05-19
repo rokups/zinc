@@ -34,44 +34,45 @@
 namespace zinc
 {
 
-#ifdef ZINC_FNV
-    typedef uint64_t StrongHash;
-#else
-    typedef uint8_t StrongHash[20];
-#endif
 typedef uint32_t WeakHash;
+
+class StrongHash
+{
+public:
+    StrongHash();
+    StrongHash(const void* m, size_t mlen);
+    StrongHash(const std::string& str);
+    StrongHash(const StrongHash& other);
+    StrongHash& operator=(const StrongHash& other);
+    bool operator==(const StrongHash& other);
+    std::string to_string() const;
+
+protected:
+#ifdef ZINC_FNV
+    uint8_t _data[8];
+#else
+    uint8_t _data[20];
+#endif
+};
 
 struct BlockHashes
 {
+    BlockHashes();
+	BlockHashes(const WeakHash& weak_, const StrongHash& strong_);
+	BlockHashes(const WeakHash& weak_, const std::string& strong_);
+    BlockHashes(const BlockHashes& other) = default;
+    BlockHashes& operator=(const BlockHashes& other) = default;
+
     WeakHash weak;
     StrongHash strong;
-
-	BlockHashes()
-	{
-		weak = 0;
-		strong = 0;
-	}
-
-	BlockHashes(WeakHash weak_, StrongHash strong_)
-	{
-		weak = weak_;
-		strong = strong_;
-	}
-
-	BlockHashes(const BlockHashes& other) = default;
-	BlockHashes& operator=(const BlockHashes& other) = default;
 };
 
 struct DeltaElement
 {
+    DeltaElement(size_t index, size_t offset);
+
     size_t block_index;
     size_t local_offset;
-
-	DeltaElement(size_t index, size_t offset)
-		: block_index(index)
-	    , local_offset(offset)
-	{
-	}
 };
 
 typedef std::vector<uint8_t>                                                                     ByteArray;

@@ -1,1 +1,4 @@
 cmake-build-*
+src/zinc/build
+src/zinc/*.so
+src/zinc/*.pyd
