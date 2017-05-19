@@ -52,7 +52,7 @@ ByteArray get_random_array(size_t length)
     ByteArray result;
     result.resize(length);
     for (auto i = 0; i < length; i++)
-        result[i] = (uint8_t)random(0, 0xFF);
+        result[i] = random<uint8_t>(' ', '~');
     return result;
 }
 
@@ -82,11 +82,13 @@ int main()
 
     for (;!stop;)
     {
-        size_t local_data_size = random<size_t>(0x100, 0x1000);
-        size_t remote_data_size = local_data_size + random(-0x50, 0x50);
-        size_t block_size = random<size_t>(0x10, 0x100);
-        auto local_data = get_random_array(local_data_size);
-        auto remote_data = mix_array(local_data, random(1, 10));
+        fprintf(stderr, "----------------------------------------\n");
+        size_t local_data_size = random<size_t>(0x20, 0x100);
+        size_t remote_data_size = local_data_size + random(-0x10, 0x10);
+        size_t block_size = random<size_t>(0x10, 0x20);
+        ByteArray local_data = get_random_array(local_data_size);
+        ByteArray local_data_copy = local_data;
+        ByteArray remote_data = mix_array(local_data, random(1, 10));
         remote_data.resize(remote_data_size);
 
         auto hash_list = zinc::get_block_checksums_mem(&remote_data.front(), remote_data_size, block_size);
@@ -99,12 +101,24 @@ int main()
         local_data.resize(next_multiple_of(std::max(local_data.size(), remote_data.size()), block_size));
         zinc::patch_file_mem(&local_data.front(), local_data.size(), block_size, delta, [&](size_t block_index, size_t block_size) {
             ByteArray result;
-            result.resize(block_size);
-            memcpy(&result.front(), &remote_data.front() + (block_index * block_size), block_size);
+            auto offset = block_index * block_size;
+            auto current_block_size = std::min(remote_data_size - offset, block_size);
+            result.resize(current_block_size);
+            memcpy(&result.front(), &remote_data.front() + offset, current_block_size);
             return result;
         });
         local_data.resize(remote_data_size);
-        assert(local_data == remote_data);
+        if (local_data != remote_data)
+        {
+            local_data_copy.push_back(0);
+            remote_data.push_back(0);
+            local_data.push_back(0);
+            fprintf(stderr, "Local  data: %s\n", &local_data_copy.front());
+            fprintf(stderr, "Remote data: %s\n", &remote_data.front());
+            fprintf(stderr, "Result data: %s\n", &local_data.front());
+            fprintf(stderr, "Block  size: %d\n", (int)block_size);
+            assert(local_data == remote_data);
+        }
         usleep(15000);
     }
 }
