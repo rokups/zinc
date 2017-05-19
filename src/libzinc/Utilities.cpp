@@ -12,7 +12,7 @@ FileMemoryMap::FileMemoryMap()
     _fd = -1;
 #endif
     _size = 0;
-    _data = (void *) -1;
+    _data = 0;
 }
 
 #if _WIN32
@@ -32,14 +32,14 @@ bool FileMemoryMap::open(const char* file_path)
         return false;
 
     _data = MapViewOfFile(_mapping, FILE_MAP_WRITE, 0, 0, _size);
-    if (!_data)
+    if (!is_open())
         return false;
     return true;
 }
 
 void FileMemoryMap::close()
 {
-    if (_data)
+    if (is_open())
     {
         UnmapViewOfFile(_data);
         _data = 0;
@@ -71,7 +71,7 @@ bool FileMemoryMap::open(const char* file_path)
     _size = (size_t)st.st_size;
 
     _data = mmap(0, _size, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
-    if (_data == (void*)-1)
+    if (!is_open())
         return false;//"FileMapping could not get map file data");
 
     return true;
@@ -79,10 +79,10 @@ bool FileMemoryMap::open(const char* file_path)
 /// Close memory mapping.
 void FileMemoryMap::close()
 {
-    if (_data != (void*)-1)
+    if (is_open())
     {
         munmap(_data, _size);
-        _data = (void*)-1;
+        _data = 0;
     }
 
     if (_fd != -1)

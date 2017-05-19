@@ -122,6 +122,9 @@ RemoteFileHashList get_block_checksums_mem(void *file_data, int64_t file_size, s
     RemoteFileHashList hashes;
     uint8_t* fp = (uint8_t*)file_data;
 
+    if (!file_data || !file_size || !block_size)
+        return hashes;
+
     auto number_of_blocks = get_max_blocks(file_size, block_size);
     hashes.reserve(number_of_blocks);
 
@@ -162,8 +165,8 @@ RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size)
     return RemoteFileHashList();
 }
 
-DeltaMap get_differences_delta_mem(const void *file_data, int64_t file_size, size_t block_size,
-                                   const RemoteFileHashList &hashes, ProgressCallback report_progress)
+DeltaMap get_differences_delta_mem(const void* file_data, int64_t file_size, size_t block_size,
+                                   const RemoteFileHashList& hashes, const ProgressCallback& report_progress)
 {
     if (file_size % block_size)
     {
@@ -175,6 +178,10 @@ DeltaMap get_differences_delta_mem(const void *file_data, int64_t file_size, siz
     delta.reserve(hashes.size());
     for (size_t i = 0; i < hashes.size(); i++)
         delta.push_back(DeltaElement(i, RR_NO_MATCH));
+
+    // When file is not present delta equals to full download.
+    if (!file_data)
+        return delta;
 
     // Sort hashes for easier lookup
 #if USE_SKA_FLAT_HASH_MAP
@@ -250,28 +257,30 @@ DeltaMap get_differences_delta_mem(const void *file_data, int64_t file_size, siz
             }
         }
     }
+    // Ensure that 100% of progress is reported.
+    auto remaining_bytes = bytes_consumed - last_progress_report;
+    if (remaining_bytes > 0)
+        report_progress(remaining_bytes, file_size, file_size);
     return delta;
 }
 
 DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
-                               ProgressCallback report_progress)
+                               const ProgressCallback& report_progress)
 {
     FileMemoryMap mapping;
     auto file_size = get_file_size(file_path);
-    if (file_size <= 0)
-        return DeltaMap();
-
-    if (truncate(file_path, round_up_to_multiple(file_size, block_size)) != 0)
-        return DeltaMap();
-
-    if (mapping.open(file_path))
-        return get_differences_delta_mem(mapping.get_data(), mapping.get_size(), block_size, hashes, report_progress);
-
-    return DeltaMap();
+    if (file_size > 0)
+    {
+        if (truncate(file_path, round_up_to_multiple(file_size, block_size)) != 0)
+            return DeltaMap();
+        mapping.open(file_path);
+    }
+    return get_differences_delta_mem(mapping.get_data(), mapping.get_size(), block_size, hashes, report_progress);
 }
 
-bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, DeltaMap &delta, FetchBlockCallback get_data,
-                    ProgressCallback report_progress)
+bool patch_file_mem(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
+                    const FetchBlockCallback& get_data,
+                    const ProgressCallback& report_progress)
 {
     if (file_size % block_size || file_size == 0)
     {
@@ -307,39 +316,46 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
         // Correct data is already in place.
         if (from_local_offset != block_offset)
         {
+            // Calculate amount of blocks to be cached in advance. Is there a better way?
+            size_t blocks_to_cache = 0;
+            for (auto i = block_index - 1; i <= block_index && i >= 0 && i < offset_cache.size(); i++)
+                blocks_to_cache = offset_cache[i].size();
+
             // This loop checks possibly used data of this block and previous block. This is only valid if we walk delta
             // from the end backwards.
-            // TODO: Investigate if there is a risk of overcaching, where bigger part of potentially large file ends in the cache instead faster than it is being evicted from it.fu
-            for (auto i = 0; i < (block_index > 0 ? 2 : 1); i++)
+            // TODO: Investigate if there is a risk of overcaching, where bigger part of potentially large file ends in the cache instead faster than it is being evicted from it.
+            for (auto i = block_index - 1; i <= block_index && i >= 0 && i < offset_cache.size(); i++)
             {
-                if ((block_index - i) >= offset_cache.size())
-                    continue;
-                auto& subcache = offset_cache[block_index - i];
+                auto& subcache = offset_cache[i];
                 if (!subcache.size())
                     continue;
+
+                // If we have only one block to cache and it's block index matches current one - we can be sure that
+                // moving data will not corrupt anything therefore we avoid block caching. On this loop iteration data
+                // will be moved into proper place. If this check was not present then block would be cached and then
+                // immediately removed from cache on the same iteration. It would be a pointless extra copying of memory.
+                if (blocks_to_cache == 1 && subcache[0].block_index == block_index)
+                    break;
+
                 for (auto it = subcache.begin(); it != subcache.end();)
                 {
                     auto& cacheable = *it;
-                    // This loop iteration will handle exact this block we are about to cache, no point in doing that.
-                    if (cacheable.block_index != block_index)
+                    size_t cacheable_local_offset = cacheable.local_offset;
+                    auto block_cache_it = block_cache.find(cacheable_local_offset);
+                    if (block_cache_it == block_cache.end())
                     {
-                        size_t cacheable_local_offset = cacheable.local_offset;
-                        auto block_cache_it = block_cache.find(cacheable_local_offset);
-                        if (block_cache_it == block_cache.end())
-                        {
-                            ByteArrayRef block;
-                            block.refcount = 1;
-                            block.data.resize(block_size, 0);
-                            memcpy(&block.data.front(), &fp[cacheable_local_offset], block_size);
-                            block_cache[cacheable_local_offset] = std::move(block);
-                            ZINC_LOG("% 4d offset +cache refcount=1", cacheable_local_offset);
-                        }
-                        else
-                        {
-                            ByteArrayRef &cached_block = (*block_cache_it).second;
-                            cached_block.refcount++;
-                            ZINC_LOG("% 4d offset +cache refcount=%d", cacheable_local_offset, cached_block.refcount);
-                        }
+                        ByteArrayRef block;
+                        block.refcount = 1;
+                        block.data.resize(block_size, 0);
+                        memcpy(&block.data.front(), &fp[cacheable_local_offset], block_size);
+                        block_cache[cacheable_local_offset] = std::move(block);
+                        ZINC_LOG("% 4d offset +cache refcount=1", cacheable_local_offset);
+                    }
+                    else
+                    {
+                        ByteArrayRef &cached_block = (*block_cache_it).second;
+                        cached_block.refcount++;
+                        ZINC_LOG("% 4d offset +cache refcount=%d", cacheable_local_offset, cached_block.refcount);
                     }
                     it = subcache.erase(it);
                 }
@@ -347,7 +363,7 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
 
             if (from_local_offset == RR_NO_MATCH)
             {
-                ZINC_LOG("% 4d block  download", block_index);
+                ZINC_LOG("% 4d offset download", block_offset);
                 auto data = get_data(block_index, block_size);
                 memcpy(&fp[block_offset], &data.front(), data.size());
             }
@@ -359,7 +375,7 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
                     ByteArrayRef& cached_block = it_cache->second;
                     cached_block.refcount--;
                     memmove(&fp[block_offset], &cached_block.data.front(), cached_block.data.size());
-                    ZINC_LOG("% 4d index  using cached offset %d", block_index, from_local_offset);
+                    ZINC_LOG("% 4d offset using cached offset %d", block_offset, from_local_offset);
 
                     // Remove block from cache only if delta map does not reference block later
                     if (cached_block.refcount == 0)
@@ -371,14 +387,14 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
                 else
                 {   // Copy block from later file position
                     memmove(&fp[block_offset], &fp[from_local_offset], block_size);
-                    ZINC_LOG("% 4d index  using file data offset %d", block_index, from_local_offset);
+                    ZINC_LOG("% 4d offset using file data offset %d", block_offset, from_local_offset);
                     auto& subcache = offset_cache[from_local_offset / block_size];
                     for (auto it = subcache.begin(); it != subcache.end(); it++)
                     {
                         auto& cacheable = *it;
                         if (cacheable.local_offset == from_local_offset)
                         {
-                            // Delete used offset, but do it only once.f
+                            // Delete used offset, but do it only once.
                             it = subcache.erase(it);
                             break;
                         }
@@ -387,32 +403,36 @@ bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, Delta
             }
         }
 
+        delta.pop_back();
         if (report_progress)
         {
             if (!report_progress(block_size, file_size - delta.size() * block_size, file_size))
                 return false;
         }
-
-        delta.pop_back();
     }
 
     return true;
 }
 
 bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
-                FetchBlockCallback get_data, ProgressCallback report_progress)
+                const FetchBlockCallback& get_data, const ProgressCallback& report_progress)
 {
     if (file_final_size <= 0)
         return false;
 
+    auto file_size = get_file_size(file_path);
+    if (file_size < 0)
+    {
+        fclose(fopen(file_path, "w+"));
+        file_size = 0;
+    }
+
     // Local file must be at least as big as remote file and it must be padded to size multiple of block_size.
-    auto max_required_size = std::max<int64_t>(block_size * delta.size(),
-                                      round_up_to_multiple(get_file_size(file_path), block_size));
+    auto max_required_size = std::max<int64_t>(block_size * delta.size(), round_up_to_multiple(file_size, block_size));
     if (truncate(file_path, max_required_size) != 0)
         return false;
 
     FileMemoryMap mapping;
-    truncate(file_path, round_up_to_multiple(get_file_size(file_path), block_size));
     if (!mapping.open(file_path))
         return false;
 

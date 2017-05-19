@@ -66,6 +66,21 @@ struct BlockHashes
 {
     WeakHash weak;
     StrongHash strong;
+
+	BlockHashes()
+	{
+		weak = 0;
+		strong = 0;
+	}
+
+	BlockHashes(WeakHash weak_, StrongHash strong_)
+	{
+		weak = weak_;
+		strong = strong_;
+	}
+
+	BlockHashes(const BlockHashes& other) = default;
+	BlockHashes& operator=(const BlockHashes& other) = default;
 };
 
 struct DeltaElement
@@ -94,16 +109,18 @@ typedef std::function<bool(int64_t bytes_done_now, int64_t bytes_done_total, int
 RemoteFileHashList get_block_checksums_mem(void *file_data, int64_t file_size, size_t block_size);
 RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size);
 
-DeltaMap get_differences_delta_mem(const void *file_data, int64_t file_size, size_t block_size,
-                                   const RemoteFileHashList &hashes, ProgressCallback report_progress=ProgressCallback());
+DeltaMap get_differences_delta_mem(const void* file_data, int64_t file_size, size_t block_size,
+								   const RemoteFileHashList& hashes,
+								   const ProgressCallback& report_progress = ProgressCallback());
 DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
-                               ProgressCallback report_progress=ProgressCallback());
+							   const ProgressCallback& report_progress = ProgressCallback());
 
 /// `file_data` must be at least as big as remote data block.
-bool patch_file_mem(void *file_data, int64_t file_size, size_t block_size, DeltaMap &delta, FetchBlockCallback get_data,
-                    ProgressCallback report_progress=ProgressCallback());
+bool patch_file_mem(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
+					const FetchBlockCallback& get_data,
+					const ProgressCallback& report_progress = ProgressCallback());
 /// Patch file and truncate it to `file_final_size`.
 bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
-                FetchBlockCallback get_data, ProgressCallback report_progress=ProgressCallback());
+				const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());
 
 };

@@ -49,7 +49,7 @@ public:
     /// Get size of mapped memory.
     size_t get_size() { return _size; }
     /// Verify if file mapping is open.
-    bool is_open() { return _size > 0 && _fd != (decltype(_fd))-1 && _data != (void*)-1; }
+    bool is_open() { return _data && _data != (void*)-1; }
     /// Map file to memory. If block_size is not 0 then mapped memory segment size will be multiple of block_size.
     bool open(const char* file_path);
     /// Close memory mapping.
