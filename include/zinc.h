@@ -21,27 +21,6 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-/*
-    Example:
-    # 1. On the remote system containing latest version of file
-    >>> remote_file_hashes = get_block_checksums(remote_file_data, data_size, block_size)
-
-    # 2. On the local system system after having received `remote_file_hashes`
-    >>> delta = get_differences_delta(local_file_data, local_file_size, block_size, remote_file_hashes)
-
-    # 3. Ensure that local file is at least as big as remote file.
-
-    # 4. To patch old file to new file in-place:
-    >>> void get_data_cb(size_t block_index, size_t block_size, void* user_data)
-    >>> {
-    >>>     ByteArray data;
-    >>>     // Download `block_size` number of remote file bytes starting at `block_index * block_size` position.
-    >>>     return data;
-    >>> }
-    >>> patch_file_mem(local_file_data, local_file_size, block_size, delta, get_data_cb, user_data)
-
-    # 5. Truncate local file size to that of a remote file.
-*/
 #pragma once
 
 #include <map>
