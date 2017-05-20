@@ -35,6 +35,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_COMPILER_IS_GNUCXX)
 else ()
     set(WITH_COVERAGE OFF)
 endif ()
+option(WITH_EXCEPTIONS ON)
 
 add_subdirectory(external)
 add_subdirectory(src)

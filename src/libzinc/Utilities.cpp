@@ -22,6 +22,9 @@
  * SOFTWARE.
  */
 #include "Utilities.hpp"
+#if ZINC_WITH_EXCEPTIONS
+#   include <system_error>
+#endif
 
 namespace zinc
 {
@@ -45,18 +48,42 @@ bool FileMemoryMap::open(const char* file_path)
     _fd = CreateFile(file_path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL,
                      0);
     if (!_fd || _fd == INVALID_HANDLE_VALUE)
+#if ZINC_WITH_EXCEPTIONS
+        throw std::system_error(GetLastError(), std::system_category(), "FileMapping could not open file.");
+#else
         return false;
+#endif
 
-    DWORD file_size_high = 0;
-    _size = GetFileSize(_fd, &file_size_high);
+    LARGE_INTEGER file_size = 0;
+    if (!GetFileSize(_fd, &file_size))
+    {
+#if ZINC_WITH_EXCEPTIONS
+        throw std::system_error(errno, std::system_category(), "FileMapping could not get file size.");
+#else
+        return false;
+#endif
+    }
+    _size = file_size.QuadPart;
 
-    _mapping = CreateFileMapping(_fd, 0, PAGE_READWRITE, file_size_high, _size, 0);
+    _mapping = CreateFileMapping(_fd, 0, PAGE_READWRITE, file_size.HighPart, file_size.LowPart, 0);
     if (!_mapping || _mapping == INVALID_HANDLE_VALUE)
+    {
+#if ZINC_WITH_EXCEPTIONS
+        throw std::system_error(GetLastError(), std::system_category(), "FileMapping create file mapping.");
+#else
         return false;
+#endif
+    }
 
     _data = MapViewOfFile(_mapping, FILE_MAP_WRITE, 0, 0, _size);
     if (!is_open())
+    {
+#if ZINC_WITH_EXCEPTIONS
+        throw std::system_error(GetLastError(), std::system_category(), "FileMapping could not get map file data.");
+#else
         return false;
+#endif
+    }
     return true;
 }
 
@@ -86,16 +113,34 @@ bool FileMemoryMap::open(const char* file_path)
     _fd = ::open(file_path, O_RDWR);
 
     if (_fd == -1)
-        return false;//"FileMapping could not open file");
+    {
+#if ZINC_WITH_EXCEPTIONS
+        throw std::system_error(errno, std::system_category(), "FileMapping could not open file.");
+#else
+        return false;
+#endif
+    }
 
     if (fstat(_fd, &st) == -1)
-        return false;//"FileMapping could not get file size");
+    {
+#if ZINC_WITH_EXCEPTIONS
+        throw std::system_error(errno, std::system_category(), "FileMapping could not get file size.");
+#else
+        return false;
+#endif
+    }
 
-    _size = (size_t)st.st_size;
+    _size = st.st_size;
 
     _data = mmap(0, _size, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
     if (!is_open())
-        return false;//"FileMapping could not get map file data");
+    {
+#if ZINC_WITH_EXCEPTIONS
+        throw std::system_error(errno, std::system_category(), "FileMapping could not get map file data.");
+#else
+        return false;
+#endif
+    }
 
     return true;
 }
@@ -163,7 +208,7 @@ int64_t round_up_to_multiple(int64_t value, int64_t multiple_of)
     return value;
 }
 
-int64_t get_file_size(const char *file_path)
+int64_t get_file_size(const char* file_path)
 {
 #if _WIN32
     struct _stati64 st = {};
@@ -174,6 +219,21 @@ int64_t get_file_size(const char *file_path)
     if (stat64(file_path, &st) == 0)
         return st.st_size;
 #endif
+    return -1;
+}
+
+int touch(const char* file_path)
+{
+#if _WIN32
+    if (auto fp = _wfopen(to_wstring(file_path).c_str(), L"a+"))
+#else
+    if (auto fp = fopen(file_path, "a+"))
+#endif
+    {
+        fclose(fp);
+        return 0;
+    }
+
     return -1;
 }
 

@@ -65,7 +65,7 @@ protected:
     int _fd;
 #endif
     /// Size of mapped file.
-    size_t _size;
+    int64_t _size;
     /// Memory of mapped file.
     void* _data;
 };
@@ -76,5 +76,6 @@ int truncate(const char* file_path, int64_t file_size);
 #endif
 int64_t round_up_to_multiple(int64_t value, int64_t multiple_of);
 int64_t get_file_size(const char* file_path);
+int touch(const char* file_path);
 
 };
