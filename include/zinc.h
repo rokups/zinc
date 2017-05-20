@@ -91,16 +91,24 @@ typedef std::function<bool(int64_t bytes_done_now, int64_t bytes_done_total, int
  * \param file_data a pointer to a memory block.
  * \param file_size size of \a file_data memory block. It must be multiple of \a block_size.
  * \param block_size size of single block.
+ * \param report_progress a callback which will be invoked to report progress.
  * \return array of \a BlockHashes which contains weak and strong checksums of every block in the file.
+ * \throws std::invalid_argument
+ * \throws std::system_error
  */
-RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size, size_t block_size);
+RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size, size_t block_size,
+                                       const ProgressCallback& report_progress = ProgressCallback());
 /*!
  * Calculates strong and weak checksums for every block in the passed file.
  * \param file_path a path to a file.
  * \param block_size size of single block.
+ * \param report_progress a callback which will be invoked to report progress.
  * \return array of \a BlockHashes which contains weak and strong checksums of every block in the file.
+ * \throws std::invalid_argument
+ * \throws std::system_error
  */
-RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size);
+RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size,
+                                       const ProgressCallback& report_progress = ProgressCallback());
 
 /*!
  * Calculates a delta map defining which blocks of data are to be reused from local files and which are to be downloaded.
@@ -110,6 +118,8 @@ RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size)
  * \param hashes \a RemoteFileHashList returned by \a get_block_checksums.
  * \param report_progress a callback which will be invoked to report progress.
  * \return \a DeltaMap describing how data should be reused from local file and which blocks should be downloaded.
+ * \throws std::invalid_argument
+ * \throws std::system_error
  */
 DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
                                const RemoteFileHashList& hashes,
@@ -121,6 +131,8 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
  * \param hashes \a RemoteFileHashList returned by \a get_block_checksums.
  * \param report_progress a callback which will be invoked to report progress.
  * \return \a DeltaMap describing how data should be reused from local file and which blocks should be downloaded.
+ * \throws std::invalid_argument
+ * \throws std::system_error
  */
 DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
 							   const ProgressCallback& report_progress = ProgressCallback());
@@ -136,6 +148,8 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
  * block_index * \a block_size position.
  * \param report_progress a callback which will be invoked to report progress.
  * \return if file update was successful.
+ * \throws std::invalid_argument
+ * \throws std::system_error
  */
 bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
 				const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());
@@ -149,6 +163,8 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
  * block_index * \a block_size position.
  * \param report_progress a callback which will be invoked to report progress.
  * \return if file update was successful.
+ * \throws std::invalid_argument
+ * \throws std::system_error
  */
 bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
 				const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());

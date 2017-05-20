@@ -35,7 +35,7 @@
 #   pragma GCC diagnostic ignored "-Wshift-count-overflow"
 #   include <flat_hash_map.hpp>
 #   pragma GCC diagnostic pop
-#   define USE_SKA_FLAT_HASH_MAP 1
+#   define ZINC_USE_SKA_FLAT_HASH_MAP 1
 #else
 #   include <unordered_map>
 #endif
@@ -174,7 +174,8 @@ size_t get_max_blocks(int64_t file_size, size_t block_size)
     return (size_t)number_of_blocks;
 }
 
-RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size, size_t block_size)
+RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size, size_t block_size,
+                                       const ProgressCallback& report_progress)
 {
     RemoteFileHashList hashes;
     uint8_t* fp = (uint8_t*)file_data;
@@ -206,6 +207,14 @@ RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size,
         h.strong = StrongHash(fp, block_size);
         hashes.push_back(h);
         fp += block_size;
+        if (report_progress)
+        {
+            if (!report_progress(block_size, (block_index + 1) * block_size, file_size))
+            {
+                ZINC_LOG("User interrupted get_block_checksums().");
+                return RemoteFileHashList();
+            }
+        }
     }
 
     if (last_block_size)
@@ -217,16 +226,18 @@ RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size,
         h.weak = RollingChecksum(&block_data.front(), block_size).digest();
         h.strong = StrongHash(&block_data.front(), block_size);
         hashes.push_back(h);
+        report_progress(last_block_size, file_size, file_size);
     }
 
     return hashes;
 }
 
-RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size)
+RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size,
+                                       const ProgressCallback& report_progress)
 {
     FileMemoryMap mapping;
     if (mapping.open(file_path))
-        return get_block_checksums(mapping.get_data(), mapping.get_size(), block_size);
+        return get_block_checksums(mapping.get_data(), mapping.get_size(), block_size, report_progress);
     return RemoteFileHashList();
 }
 
@@ -254,7 +265,7 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
         return delta;
 
     // Sort hashes for easier lookup
-#if USE_SKA_FLAT_HASH_MAP
+#if ZINC_USE_SKA_FLAT_HASH_MAP
     ska::flat_hash_map<WeakHash, std::vector<std::pair<int32_t, const BlockHashes*>>> lookup_table;
     lookup_table.reserve(hashes.size());
 #else
@@ -341,7 +352,8 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
     auto file_size = get_file_size(file_path);
     if (file_size > 0)
     {
-        if (auto err = truncate(file_path, round_up_to_multiple(file_size, block_size)) != 0)
+        auto err = truncate(file_path, round_up_to_multiple(file_size, block_size));
+        if (err != 0)
         {
             const auto message = "Could not truncate file_path to required size.";
 #if ZINC_WITH_EXCEPTIONS
@@ -396,7 +408,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
     }
 
     uint8_t* fp = (uint8_t*)file_data;
-#if USE_SKA_FLAT_HASH_MAP
+#if ZINC_USE_SKA_FLAT_HASH_MAP
     ska::flat_hash_map<size_t, ByteArrayRef> block_cache;
     block_cache.reserve(std::max((size_t)10, delta.size() / 10));
 #else
@@ -535,7 +547,8 @@ bool patch_file(const char* file_path, int64_t file_final_size, size_t block_siz
 
     // Local file must be at least as big as remote file and it must be padded to size multiple of block_size.
     auto max_required_size = std::max<int64_t>(block_size * delta.size(), round_up_to_multiple(file_size, block_size));
-    if (auto err = truncate(file_path, max_required_size) != 0)
+    auto err = truncate(file_path, max_required_size);
+    if (err != 0)
     {
         const auto message = "Could not truncate file_path to required size.";
 #if ZINC_WITH_EXCEPTIONS
@@ -553,7 +566,8 @@ bool patch_file(const char* file_path, int64_t file_final_size, size_t block_siz
     if (patch_file(mapping.get_data(), mapping.get_size(), block_size, delta, get_data, report_progress))
     {
         mapping.close();
-        if (auto err = truncate(file_path, file_final_size) != 0)
+        err = truncate(file_path, file_final_size);
+        if (err != 0)
         {
             const auto message = "Could not truncate file_path to file_final_size.";
 #if ZINC_WITH_EXCEPTIONS

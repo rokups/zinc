@@ -39,10 +39,12 @@ import os
 import argparse
 import json
 import hashlib
+import logging
 import urllib.request
 
 import progressbar
 import pyzinc
+import sys
 
 
 class NetworkFile(object):
@@ -85,39 +87,50 @@ def netopen(network_path):
 
 
 def hash_files(args):
-    if not os.path.isfile(args.input):
-        raise FileNotFoundError()
+    try:
+        if not os.path.isfile(args.input):
+            raise FileNotFoundError(args.input)
 
-    if os.path.isfile(args.output):
-        if not args.force:
-            raise FileExistsError()
+        if os.path.isfile(args.output):
+            if not args.force:
+                raise FileExistsError(args.output)
 
-    file_size = os.path.getsize(args.input)
-    block_size = max(5 * 1024, min(4 * 1024 * 1024, int(file_size / 512)))
-    chunk_size = 1024 * 1024
+        file_size = os.path.getsize(args.input)
+        block_size = max(5 * 1024, min(4 * 1024 * 1024, int(file_size / 512)))
+        chunk_size = 1024 * 1024
 
-    sha256 = hashlib.sha256()
-    with open(args.input, 'rb') as fp:
-        bar = progressbar.ProgressBar(max_value=file_size, widgets=[
-            'Hashing file: ', progressbar.Bar(), ' (', progressbar.ETA(), ') '
-        ])
-        for chunk in iter(lambda: fp.read(chunk_size), b''):
-            sha256.update(chunk)
+        sha256 = hashlib.sha256()
+        with open(args.input, 'rb') as fp:
+            bar = progressbar.ProgressBar(max_value=file_size, redirect_stderr=True, redirect_stdout=True, widgets=[
+                'Hashing file: ', progressbar.Bar(), ' (', progressbar.ETA(), ')'
+            ])
+            for chunk in iter(lambda: fp.read(chunk_size), b''):
+                sha256.update(chunk)
+                bar.update(fp.tell())
             bar.update(fp.tell())
-        bar.update(fp.tell())
-    sha256 = sha256.hexdigest().lower()
+        sha256 = sha256.hexdigest().lower()
 
-    print('\nHashing blocks...')
-    checksums = pyzinc.get_block_checksums(args.input, block_size)
-    with open(args.output, 'w+') as fp:
-        json.dump({
-            'filename': os.path.basename(args.input),
-            'sha256': sha256,
-            'file_size': file_size,
-            'block_size': block_size,
-            'blocks': [(c.weak, str(c.strong)) for c in checksums]
-        }, fp, indent=4)
-    print('Done')
+        bar = progressbar.ProgressBar(max_value=file_size, redirect_stderr=True, redirect_stdout=True, widgets=[
+            'Hashing blocks: ', progressbar.Bar(), ' (', progressbar.ETA(), ')'
+        ])
+
+        def report_progress(bytes_done_now, bytes_done_total, file_size):
+            bar.update(bytes_done_total)
+            return True
+
+        checksums = pyzinc.get_block_checksums(args.input, block_size, report_progress)
+        with open(args.output, 'w+') as fp:
+            json.dump({
+                'filename': os.path.basename(args.input),
+                'sha256': sha256,
+                'file_size': file_size,
+                'block_size': block_size,
+                'blocks': [(c.weak, str(c.strong)) for c in checksums]
+            }, fp, indent=4)
+    except Exception as e:
+        logging.error(str(e))
+        return -1
+    return 0
 
 
 def sync_files(args):
@@ -135,9 +148,8 @@ def sync_files(args):
         file_info = json.load(fp_json)
 
         hashes = [pyzinc.BlockHashes(*block) for block in file_info['blocks']]
-        bar = progressbar.ProgressBar(max_value=file_info['file_size'], widgets=[
-            'Building delta: ', progressbar.Bar(), ' (', progressbar.ETA(), ') '
-        ])
+        bar = progressbar.ProgressBar(max_value=file_info['file_size'], redirect_stderr=True, redirect_stdout=True,
+                                      widgets=['Building delta: ', progressbar.Bar(), ' (', progressbar.ETA(), ')'])
 
         def report_progress(bytes_done_now, bytes_done_total, file_size):
             bar.update(bytes_done_total)
@@ -148,49 +160,54 @@ def sync_files(args):
             return fp_file.read(block_size)
 
         delta = pyzinc.get_differences_delta(args.output, file_info['block_size'], hashes, report_progress)
-        if len(delta) == 0:
-            print('Building delta failed')
-        else:
-            bar = progressbar.ProgressBar(max_value=file_info['file_size'], widgets=[
-                'Syncing file: ', progressbar.Bar(), ' (', progressbar.ETA(), ') '
-            ])
-            if pyzinc.patch_file(args.output, file_info['file_size'], file_info['block_size'], delta, get_data,
-                                   report_progress):
-                sha256 = hashlib.sha256()
-                with open(args.output, 'rb') as fp:
-                    bar = progressbar.ProgressBar(max_value=file_info['file_size'], widgets=[
-                        'Verifying: ', progressbar.Bar(), ' (', progressbar.ETA(), ') '
-                    ])
-                    for chunk in iter(lambda: fp.read(1024 * 1024), b''):
-                        sha256.update(chunk)
-                        bar.update(fp.tell())
-                    bar.update(fp.tell())
-                sha256 = sha256.hexdigest().lower()
-                print()
-                if sha256 == file_info['sha256']:
-                    print('File saved to', args.output)
-                else:
-                    print('Hash miss-match')
-            else:
-                print('File synchronization failed')
+
+        bar = progressbar.ProgressBar(max_value=file_info['file_size'], redirect_stderr=True, redirect_stdout=True,
+                                      widgets=['Syncing file: ', progressbar.Bar(), ' (', progressbar.ETA(), ')'])
+
+        pyzinc.patch_file(args.output, file_info['file_size'], file_info['block_size'], delta, get_data,
+                            report_progress)
+        sha256 = hashlib.sha256()
+        with open(args.output, 'rb') as fp:
+            bar = progressbar.ProgressBar(max_value=file_info['file_size'], redirect_stderr=True, redirect_stdout=True,
+                                          widgets=['Verifying: ', progressbar.Bar(), ' (', progressbar.ETA(), ')'])
+            for chunk in iter(lambda: fp.read(1024 * 1024), b''):
+                sha256.update(chunk)
+                bar.update(fp.tell())
+            bar.update(fp.tell())
+        sha256 = sha256.hexdigest().lower()
+
+        if sha256 != file_info['sha256']:
+            logging.error('Hash miss-match')
+            return -1
+
+    except Exception as e:
+        logging.error(str(e))
+        return -1
     finally:
         if fp_file:
             fp_file.close()
         if fp_json:
             fp_json.close()
 
+    return 0
+
 
 def zinc(args):
     if args.hash:
-        hash_files(args)
+        return hash_files(args)
     else:
-        sync_files(args)
+        return sync_files(args)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--hash', action='store_true', help='Build file hashes.')
     parser.add_argument('-f', '--force', action='store_true', help='Overwrite existing files.')
+    parser.add_argument('-v', '--verbose', default=0, action='count')
     parser.add_argument('input', help='Path or a URL to file.')
     parser.add_argument('output', help='Path to a file.')
-    zinc(parser.parse_args())
+    args = parser.parse_args()
+
+    logging.basicConfig(level=[logging.WARNING, logging.INFO, logging.DEBUG][args.verbose])
+    err = zinc(args)
+    sys.exit(err)

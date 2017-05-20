@@ -30,7 +30,9 @@ cflags = {
     'unix': []
 }
 lflags = {}
-build_definitions = []
+build_definitions = [
+    ('ZINC_WITH_EXCEPTIONS', '1')
+]
 
 if '--strong-hash-fnv' in sys.argv:
     sys.argv.remove('--strong-hash-fnv')
