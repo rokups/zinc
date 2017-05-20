@@ -48,7 +48,7 @@ public:
     std::string to_string() const;
 
 protected:
-#ifdef ZINC_FNV
+#if ZINC_WITH_STRONG_HASH_FNV
     uint8_t _data[8];
 #else
     uint8_t _data[20];

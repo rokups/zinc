@@ -36,7 +36,7 @@
 #else
 #   include <unordered_map>
 #endif
-#ifndef ZINC_FNV
+#if ZINC_WITH_STRONG_HASH_SHA1
 #   include "sha1.h"
 #endif
 #include "RollingChecksum.hpp"
@@ -54,7 +54,7 @@ struct ByteArrayRef
 
 inline void ZINC_LOG(const char *format, ...)
 {
-#if ZINC_DEBUG
+#if ZINC_WITH_DEBUG
     va_list ap;
     va_start(ap, format);
     vfprintf(stderr, format, ap);
@@ -77,7 +77,7 @@ StrongHash::StrongHash()
 
 StrongHash::StrongHash(const void* m, size_t mlen)
 {
-#ifdef ZINC_FNV
+#if ZINC_WITH_STRONG_HASH_FNV
     auto p = (uint8_t*)m;
     uint64_t hash = 0xcbf29ce484222325;
     static_assert(sizeof(hash) == sizeof(_data));

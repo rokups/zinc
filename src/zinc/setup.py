@@ -34,7 +34,9 @@ build_definitions = []
 
 if '--strong-hash-fnv' in sys.argv:
     sys.argv.remove('--strong-hash-fnv')
-    build_definitions.append(('ZINC_FNV', '1'))
+    build_definitions.append(('ZINC_WITH_STRONG_HASH_FNV', '1'))
+else:
+    build_definitions.append(('ZINC_WITH_STRONG_HASH_SHA1', '1'))
 
 if '--force-cxx11' in sys.argv:
     sys.argv.remove('--force-cxx11')
