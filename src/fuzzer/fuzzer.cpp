@@ -28,6 +28,7 @@
 #include <signal.h>
 #include <cstring>
 #include <assert.h>
+#include "Utilities.hpp"
 
 
 using namespace zinc;
@@ -47,7 +48,7 @@ T random(T min, T max)
     return (dist(urandom) % (max - min)) + min;
 }
 
-ByteArray get_random_array(size_t length)
+ByteArray get_random_array(int64_t length)
 {
     ByteArray result;
     result.resize(length);
@@ -69,13 +70,6 @@ ByteArray mix_array(const ByteArray& source, int amount)
     return result;
 }
 
-size_t next_multiple_of(size_t n, size_t mul)
-{
-    if (n % mul)
-        return n + mul - (n % mul);
-    return n;
-}
-
 int main()
 {
     signal(SIGINT, &sigint_handler);
@@ -83,22 +77,23 @@ int main()
     for (;!stop;)
     {
         fprintf(stderr, "----------------------------------------\n");
-        size_t local_data_size = random<size_t>(0x20, 0x100);
-        size_t remote_data_size = local_data_size + random(-0x10, 0x10);
-        size_t block_size = random<size_t>(0x10, 0x20);
+        int64_t local_data_size = random<size_t>(10, 50);
+        int64_t remote_data_size = std::max<int64_t>(local_data_size + random(-20, 20), 2);
+        size_t block_size = random<size_t>(5, 10);
         ByteArray local_data = get_random_array(local_data_size);
         ByteArray local_data_copy = local_data;
-        ByteArray remote_data = mix_array(local_data, random(1, 10));
+        ByteArray remote_data = local_data;
         remote_data.resize(remote_data_size);
+        remote_data = mix_array(remote_data, random(1, 5));
 
         auto hash_list = zinc::get_block_checksums(&remote_data.front(), remote_data_size, block_size);
 
         // Memory block must be multiple of block_size when calling get_differences_delta()
-        local_data.resize(next_multiple_of(local_data_size, block_size));
+        local_data.resize(round_up_to_multiple(local_data_size, block_size));
         auto delta = zinc::get_differences_delta(&local_data.front(), local_data.size(), block_size, hash_list);
 
         // Memory block must be multiple of block_size and big enough to accomodate new data.
-        local_data.resize(next_multiple_of(std::max(local_data.size(), remote_data.size()), block_size));
+        local_data.resize(round_up_to_multiple(std::max(local_data.size(), remote_data.size()), block_size));
         zinc::patch_file(&local_data.front(), local_data.size(), block_size, delta, [&](size_t block_index, size_t block_size) {
             ByteArray result;
             auto offset = block_index * block_size;
