@@ -226,7 +226,8 @@ RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size,
         h.weak = RollingChecksum(&block_data.front(), block_size).digest();
         h.strong = StrongHash(&block_data.front(), block_size);
         hashes.push_back(h);
-        report_progress(last_block_size, file_size, file_size);
+        if (report_progress)
+            report_progress(last_block_size, file_size, file_size);
     }
 
     return hashes;
@@ -339,9 +340,12 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
         }
     }
     // Ensure that 100% of progress is reported.
-    auto remaining_bytes = bytes_consumed - last_progress_report;
-    if (remaining_bytes > 0)
-        report_progress(remaining_bytes, file_size, file_size);
+    if (report_progress)
+    {
+        auto remaining_bytes = bytes_consumed - last_progress_report;
+        if (remaining_bytes > 0)
+            report_progress(remaining_bytes, file_size, file_size);
+    }
     return delta;
 }
 
