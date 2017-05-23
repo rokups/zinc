@@ -430,7 +430,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
             // Calculate amount of blocks to be cached in advance. Is there a better way?
             size_t blocks_to_cache = 0;
             for (auto i = block_index - 1; i <= block_index && i >= 0 && i < offset_cache.size(); i++)
-                blocks_to_cache = offset_cache[i].size();
+                blocks_to_cache += offset_cache[i].size();
 
             // This loop checks possibly used data of this block and previous block. This is only valid if we walk delta
             // from the end backwards.

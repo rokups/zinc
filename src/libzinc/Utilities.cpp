@@ -54,8 +54,8 @@ bool FileMemoryMap::open(const char* file_path)
         return false;
 #endif
 
-    LARGE_INTEGER file_size = 0;
-    if (!GetFileSize(_fd, &file_size))
+    LARGE_INTEGER file_size = {};
+    if (!GetFileSizeEx(_fd, &file_size))
     {
 #if ZINC_WITH_EXCEPTIONS
         throw std::system_error(errno, std::system_category(), "FileMapping could not get file size.");
@@ -211,7 +211,7 @@ int64_t round_up_to_multiple(int64_t value, int64_t multiple_of)
 int64_t get_file_size(const char* file_path)
 {
 #if _WIN32
-    struct _stati64 st = {};
+    struct _stat32i64 st = {};
     if (_wstat32i64(to_wstring(file_path).c_str(), &st) == 0)
         return st.st_size;
 #else
