@@ -51,7 +51,7 @@ namespace zinc
 
 struct ByteArrayRef
 {
-    size_t refcount;
+    size_t refcount = 1;
     ByteArray data;
 };
 
@@ -419,55 +419,110 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
 #else
     std::unordered_map<size_t, ByteArrayRef> block_cache;
 #endif
+
+    std::vector<int64_t> priority_index;
+    priority_index.reserve(64);
+
+    auto cache_block = [&](DeltaElement& cacheable)
+    {
+        auto block_cache_it = block_cache.find(cacheable.local_offset);
+        if (block_cache_it == block_cache.end())
+        {
+            ByteArrayRef block{};
+            block.data.resize(block_size, 0);
+            memcpy(&block.data.front(), &fp[cacheable.local_offset], block_size);
+            block_cache[cacheable.local_offset] = std::move(block);
+            ZINC_LOG("% 4d offset +cache refcount=1", cacheable.local_offset);
+        }
+        else
+        {
+            ByteArrayRef &cached_block = (*block_cache_it).second;
+            cached_block.refcount++;
+            ZINC_LOG("% 4d offset +cache refcount=%d", cacheable.local_offset, cached_block.refcount);
+        }
+        // Prioritize cached blocks so we can evict data from cache as soon as possible.
+        priority_index.push_back(cacheable.block_index);
+    };
+
     while (delta.size())
     {
-        DeltaElement de = delta.back();
+        DeltaElement de;
+        if (priority_index.size())
+        {
+            // Handle blocks which have data cached first so cache can be cleared up.
+            auto index = priority_index.back();
+            if (index >= delta.size())
+            {
+                // This block was already handled normally.
+                priority_index.pop_back();
+                continue;
+            }
+            auto& de_ref = delta[index];
+            de = de_ref;
+            de_ref.block_index = -1;                // Mark block as invalid so it is not handled twice in this loop.
+            priority_index.pop_back();
+        }
+        else
+        {
+            // Handle blocks normally, walking from the back of the file.
+            de = delta.back();
+            delta.pop_back();
+            if (!de.is_valid())
+            {
+                // This block was already handled by prioritizing cached blocks.
+                continue;
+            }
+        }
 
         // Correct data is already in place.
         if (!de.is_done())
         {
-            // Calculate amount of blocks to be cached in advance. Is there a better way?
-            size_t blocks_to_cache = 0;
-            for (auto i = de.block_index - 1; i <= de.block_index && i >= 0 && i < offset_cache.size(); i++)
-                blocks_to_cache += offset_cache[i].size();
-
-            // This loop checks possibly used data of this block and previous block. This is only valid if we walk delta
-            // from the end backwards.
-            // TODO: Investigate if there is a risk of overcaching, where bigger part of potentially large file ends in the cache instead faster than it is being evicted from it.
-            for (auto i = de.block_index - 1; i <= de.block_index && i >= 0 && i < offset_cache.size(); i++)
+            // Cache data if writing current block overwrites data needed by any other blocks.
             {
-                auto& subcache = offset_cache[i];
-                if (!subcache.size())
-                    continue;
+                DeltaElement maybe_cache;
+                size_t cached_blocks = 0;
 
-                // If we have only one block to cache and it's block index matches current one - we can be sure that
-                // moving data will not corrupt anything therefore we avoid block caching. On this loop iteration data
-                // will be moved into proper place. If this check was not present then block would be cached and then
-                // immediately removed from cache on the same iteration. It would be a pointless extra copying of memory.
-                if (blocks_to_cache == 1 && subcache[0].block_index == de.block_index)
-                    break;
-
-                for (auto it = subcache.begin(); it != subcache.end();)
+                // Check three clusters of cacheable blocks. Blocks in these clusters have a chance to overlap with
+                // current position we are about to write. If any block overlaps with current block - data required for
+                // that block will be cached.
+                for (auto check_index = std::max<int64_t>(de.block_index - 1, 0),
+                          end_index = std::min<int64_t>(de.block_index + 2, offset_cache.size());
+                     check_index < end_index; check_index++)
                 {
-                    auto& cacheable = *it;
-                    auto cacheable_local_offset = cacheable.local_offset;
-                    auto block_cache_it = block_cache.find(cacheable_local_offset);
-                    if (block_cache_it == block_cache.end())
+                    auto& subcache = offset_cache[check_index];
+                    for (auto it = subcache.begin(); it != subcache.end();)
                     {
-                        ByteArrayRef block;
-                        block.refcount = 1;
-                        block.data.resize(block_size, 0);
-                        memcpy(&block.data.front(), &fp[cacheable_local_offset], block_size);
-                        block_cache[cacheable_local_offset] = std::move(block);
-                        ZINC_LOG("% 4d offset +cache refcount=1", cacheable_local_offset);
+                        auto& cacheable = *it;
+                        // Make sure block requires data from position that overlaps with current block.
+                        if (llabs(cacheable.local_offset - de.block_offset) < block_size)
+                        {
+                            if (cached_blocks > 0)
+                                cache_block(cacheable);
+                            else
+                            {
+                                // Defer caching of very first element. Read below for explanation.
+                                maybe_cache = cacheable;
+                            }
+                            cached_blocks++;
+                            it = subcache.erase(it);
+                        }
+                        else
+                            it++;
                     }
-                    else
-                    {
-                        ByteArrayRef &cached_block = (*block_cache_it).second;
-                        cached_block.refcount++;
-                        ZINC_LOG("% 4d offset +cache refcount=%d", cacheable_local_offset, cached_block.refcount);
-                    }
-                    it = subcache.erase(it);
+                }
+
+                if (cached_blocks == 1 && maybe_cache.block_index == de.block_index)
+                {
+                    // If we have only one block to cache and it's block index matches current one - we can be sure that
+                    // moving data will not corrupt anything therefore we avoid block caching. On this loop iteration
+                    // data will be moved into proper place. If this check was not present then block would be cached
+                    // and then immediately removed from cache on the same iteration. It would be a pointless extra
+                    // copying of memory.
+                }
+                else if (cached_blocks > 0)
+                {
+                    assert(maybe_cache.is_valid());
+                    cache_block(maybe_cache);
                 }
             }
 
@@ -505,7 +560,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                         if (cacheable.local_offset == de.local_offset)
                         {
                             // Delete used offset, but do it only once.
-                            it = subcache.erase(it);
+                            subcache.erase(it);
                             break;
                         }
                     }
@@ -513,7 +568,6 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
             }
         }
 
-        delta.pop_back();
         if (report_progress)
         {
             if (!report_progress(block_size, file_size - delta.size() * block_size, file_size))

@@ -69,15 +69,17 @@ struct BlockHashes
 
 struct DeltaElement
 {
-    DeltaElement(size_t block_index, size_t block_offset);
+    DeltaElement() { }
+	DeltaElement(size_t block_index, size_t block_offset);
 
-    size_t block_index;
-    int64_t local_offset;
-    int64_t block_offset;
+	int64_t block_index = -1;
+    int64_t local_offset = -1;
+    int64_t block_offset = -1;
 
     bool is_download() { return local_offset == -1; }
     bool is_copy()     { return local_offset > 0 && !is_done(); }
     bool is_done()     { return block_offset == local_offset; }
+	bool is_valid()    { return block_index >= 0 && block_offset >= 0; }
 };
 
 typedef std::vector<uint8_t>                                                                     ByteArray;
@@ -86,7 +88,7 @@ typedef std::vector<DeltaElement>                                               
 /// Strong and weak hashes for each block.
 typedef std::vector<BlockHashes>                                                                 RemoteFileHashList;
 /// A callback that should obtain block data at specified index and return it.
-typedef std::function<ByteArray(size_t block_index, size_t block_size)>                          FetchBlockCallback;
+typedef std::function<ByteArray(int64_t block_index, size_t block_size)>                          FetchBlockCallback;
 /// A callback for reporting progress. Return true if patching should continue, false if patching should terminate.
 typedef std::function<bool(int64_t bytes_done_now, int64_t bytes_done_total, int64_t file_size)> ProgressCallback;
 

@@ -37,7 +37,7 @@ ByteArray string_to_array(const char* string)
     return result;
 }
 
-ByteArray get_data(size_t block_index, size_t block_size, void* user_data)
+ByteArray get_data(int64_t block_index, size_t block_size, void* user_data)
 {
     ByteArray& source = *(ByteArray*)user_data;
     ByteArray result(std::min(block_size, source.size() - (block_index * block_size)));

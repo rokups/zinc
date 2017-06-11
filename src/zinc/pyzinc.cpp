@@ -47,7 +47,8 @@ PYBIND11_PLUGIN(pyzinc)
 
     py::class_<DeltaElement>(m, "DeltaElement")
         .def_readonly("block_index", &DeltaElement::block_index)
-        .def_readonly("local_offset", &DeltaElement::local_offset);
+        .def_readonly("local_offset", &DeltaElement::local_offset)
+        .def_readonly("block_offset", &DeltaElement::block_offset);
 
     py::bind_vector<RemoteFileHashList>(m, "RemoteFileHashList");
     py::bind_vector<DeltaMap>(m, "DeltaMap");
