@@ -69,10 +69,15 @@ struct BlockHashes
 
 struct DeltaElement
 {
-    DeltaElement(size_t index, size_t offset);
+    DeltaElement(size_t block_index, size_t block_offset);
 
     size_t block_index;
-    size_t local_offset;
+    int64_t local_offset;
+    int64_t block_offset;
+
+    bool is_download() { return local_offset == -1; }
+    bool is_copy()     { return local_offset > 0 && !is_done(); }
+    bool is_done()     { return block_offset == local_offset; }
 };
 
 typedef std::vector<uint8_t>                                                                     ByteArray;

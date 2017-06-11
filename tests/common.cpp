@@ -74,7 +74,9 @@ bool data_sync_test(const char* remote, const char* local, size_t block_size)
         fprintf(stderr, "Remote data: %s\n", &data_remote.front());
         fprintf(stderr, "Result data: %s\n", &data_local.front());
         fprintf(stderr, "Block  size: %d\n", (int)block_size);
+        fprintf(stderr, "------------------------------------------\n");
         return false;
     }
+    fprintf(stderr, "------------------------------------------\n");
     return true;
 }
