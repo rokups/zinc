@@ -80,6 +80,12 @@ struct DeltaElement
     bool is_copy()     { return local_offset > 0 && !is_done(); }
     bool is_done()     { return block_offset == local_offset; }
 	bool is_valid()    { return block_index >= 0 && block_offset >= 0; }
+    bool operator==(const DeltaElement& other)
+    {
+        return block_index == other.block_index &&
+               block_offset == other.block_offset &&
+               local_offset == other.local_offset;
+    }
 };
 
 typedef std::vector<uint8_t>                                                                     ByteArray;

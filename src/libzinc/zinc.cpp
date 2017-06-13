@@ -400,19 +400,22 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
 #endif
 }
 
-    // Offset cache is used for quickly determining if local data is needed anywhere else in local file.
-    std::vector<std::vector<DeltaElement>> offset_cache((unsigned int)(file_size / block_size));
+    // Reference cache maps block index to a list of other blocks that are very likely to use data at specified index.
+    std::vector<std::vector<DeltaElement>> ref_cache((unsigned int)(file_size / block_size));
     {
         size_t block_index = 0;
         for (auto it = delta.begin(); it != delta.end(); it++)
         {
             auto& delta_element = *it;
+            // Only keep record of elements that require data from other parts of the file. Anything else is irrelevant.
             if (delta_element.is_copy())
-                offset_cache[delta_element.local_offset / block_size].push_back(delta_element);
+                ref_cache[delta_element.local_offset / block_size].push_back(delta_element);
             block_index++;
         }
     }
     uint8_t* fp = (uint8_t*)file_data;
+    // Block cache is a temporary storage for blocks that will be required elsewhere in the file but are about to be
+    // overwritten.
 #if ZINC_USE_SKA_FLAT_HASH_MAP
     ska::flat_hash_map<int64_t, ByteArrayRef> block_cache;
     block_cache.reserve(std::max((size_t)10, delta.size() / 10));
@@ -486,10 +489,10 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                 // current position we are about to write. If any block overlaps with current block - data required for
                 // that block will be cached.
                 for (auto check_index = std::max<int64_t>(de.block_index - 1, 0),
-                          end_index = std::min<int64_t>(de.block_index + 2, offset_cache.size());
+                          end_index = std::min<int64_t>(de.block_index + 2, ref_cache.size());
                      check_index < end_index; check_index++)
                 {
-                    auto& subcache = offset_cache[check_index];
+                    auto& subcache = ref_cache[check_index];
                     for (auto it = subcache.begin(); it != subcache.end();)
                     {
                         auto& cacheable = *it;
@@ -553,17 +556,12 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                 {   // Copy block from later file position
                     memmove(&fp[de.block_offset], &fp[de.local_offset], block_size);
                     ZINC_LOG("% 4d offset using file data offset %d", de.block_offset, de.local_offset);
-                    auto& subcache = offset_cache[de.local_offset / block_size];
-                    for (auto it = subcache.begin(); it != subcache.end(); it++)
-                    {
-                        auto& cacheable = *it;
-                        if (cacheable.local_offset == de.local_offset)
-                        {
-                            // Delete used offset, but do it only once.
-                            subcache.erase(it);
-                            break;
-                        }
-                    }
+                    // Delete handled block from reference cache lookup table if it exists there. This prevents handled
+                    // blocks form getting cached as that cached data would not be needed any more.
+                    auto& subcache = ref_cache[de.local_offset / block_size];
+                    auto it = std::find(subcache.begin(), subcache.end(), de);
+                    if (it != subcache.end())
+                        subcache.erase(it);
                 }
             }
         }
