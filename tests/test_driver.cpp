@@ -139,3 +139,8 @@ BOOST_AUTO_TEST_CASE (FuzzTest1)
     BOOST_CHECK(data_sync_test(",<*7Dxk:%\\7CL]R^J^#Da'hw<8Z;%=0Q7%1/mcMIeHx*VDEu48mWWaB4V\\)llLxfjsR=!YT,kLbTjWEd&[}xCb;jdu/05m\"5DD%iPevf6T#^HgIs4`R]WU437e\"oB#O#&dwSF4H3i>3/njSJYK6@HB'VziPabjbTQ[\"]Y%yQHEj=#^HgIs4`R]WU\"oB#O#&dwSF4H`1Qj;VigiO!8Jc$2`-EwRs-vq4Sokl8;MiMT@",
                                ",<*7Dxk:%\\7CL]R^ NL_6!$ZC7:J^#Da'hw<8Z;%=0Q7%1/mcMIeHx*VDEu48mWWaB4V\\)llLxfjsR=!YT,kLbTjWEd&[}xCb;jdu/05m\"5DD%iPevf6TH:,5/e>kLQ[;Sq<hd53i>3/njSJYK6@HB'VziPabjbTQ[\"]Y%yQHEj=#^HgIs4`R]WU437e\"oB#O#&dwSF4H`1Qj;VigiO!8Jc$2`-EwRs-vq4Sokl8;MiMT@p", 18));
 }
+
+BOOST_AUTO_TEST_CASE (FuzzTest2)
+{
+    BOOST_CHECK(data_sync_test(",hI|J@Q\\so}:6f=_yoy\\so}:6f=_\\so}:6f=_yo", "}:6f=_yoyL?k,hI|J@Q\\soOsD;E}CvfC]OS!G5", 5));
+}

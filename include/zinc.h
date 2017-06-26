@@ -77,7 +77,7 @@ struct DeltaElement
     int64_t block_offset = -1;
 
     bool is_download() { return local_offset == -1; }
-    bool is_copy()     { return local_offset > 0 && !is_done(); }
+    bool is_copy()     { return local_offset >= 0 && !is_done(); }
     bool is_done()     { return block_offset == local_offset; }
 	bool is_valid()    { return block_index >= 0 && block_offset >= 0; }
     bool operator==(const DeltaElement& other)
