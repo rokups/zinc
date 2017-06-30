@@ -68,10 +68,23 @@ inline void ZINC_LOG(const char *format, ...)
 
 const size_t RR_NO_MATCH = (const size_t)-1;
 
+template<typename T> void zinc_error(const char* message, int error=0)
+{
+#if ZINC_WITH_EXCEPTIONS
+    throw T(message);
+#else
+    ZINC_LOG(message);
+#endif
+}
 
-
-
-
+template<> void zinc_error<std::system_error>(const char* message, int error)
+{
+#if ZINC_WITH_EXCEPTIONS
+    throw std::system_error(error, std::system_category(), message);
+#else
+    ZINC_LOG(message);
+#endif
+}
 
 StrongHash::StrongHash()
 {
@@ -173,13 +186,8 @@ RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size,
 
     if (!file_data || !file_size || !block_size)
     {
-        const auto message = "file_data, file_size and block_size must be positive numbers.";
-#if ZINC_WITH_EXCEPTIONS
-        throw std::invalid_argument(message);
-#else
-        ZINC_LOG(message);
+        zinc_error<std::invalid_argument>("file_data, file_size and block_size must be positive numbers.");
         return hashes;
-#endif
     }
 
     auto number_of_blocks = get_max_blocks(file_size, block_size);
@@ -238,13 +246,8 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
 {
     if (file_size % block_size)
     {
-        const auto message = "file_size must be multiple of block_size.";
-#if ZINC_WITH_EXCEPTIONS
-        throw std::invalid_argument(message);
-#else
-        ZINC_LOG(message);
+        zinc_error<std::invalid_argument>("file_size must be multiple of block_size.");
         return DeltaMap();
-#endif
     }
 
     DeltaMap delta;
@@ -252,9 +255,11 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
     for (size_t block_index = 0; block_index < hashes.size(); block_index++)
         delta.push_back(DeltaElement(block_index, block_index * block_size));
 
-    // When file is not present delta equals to full download. This is not an error.
     if (!file_data)
+    {
+        ZINC_LOG("File is not present, delta equals to full download.");
         return delta;
+    }
 
     // Sort hashes for easier lookup
 #if ZINC_USE_SKA_FLAT_HASH_MAP
@@ -350,13 +355,8 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
         auto err = truncate(file_path, round_up_to_multiple(file_size, block_size));
         if (err != 0)
         {
-            const auto message = "Could not truncate file_path to required size.";
-#if ZINC_WITH_EXCEPTIONS
-            throw std::system_error(err, std::system_category(), message);
-#else
-            ZINC_LOG(message);
+            zinc_error<std::system_error>("Could not truncate file_path to required size.", err);
             return DeltaMap();
-#endif
         }
         // We open file mapping only if file exists. If file is missing and mapping is not opened then
         // get_differences_delta() call will get null pointer for file data and will return delta for the full download.
@@ -370,25 +370,15 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
 {
     if (file_size % block_size)
     {
-        const auto message = "File data must be multiple of a block size.";
-#if ZINC_WITH_EXCEPTIONS
-        throw std::invalid_argument(message);
-#else
-        ZINC_LOG(message);
+        zinc_error<std::invalid_argument>("File data must be multiple of a block size.");
         return false;
-#endif
     }
 
     if (file_size < 1)
     {
-        const auto message = "file_size must be a positive number.";
-#if ZINC_WITH_EXCEPTIONS
-        throw std::invalid_argument(message);
-#else
-        ZINC_LOG(message);
+        zinc_error<std::invalid_argument>("file_size must be a positive number.");
         return false;
-#endif
-}
+    }
 
     // Reference cache maps block index to a list of other blocks that are very likely to use data at specified index.
     std::vector<std::vector<DeltaElement>> ref_cache((unsigned int)(file_size / block_size));
@@ -574,13 +564,8 @@ bool patch_file(const char* file_path, int64_t file_final_size, size_t block_siz
 {
     if (file_final_size <= 0)
     {
-        const auto message = "file_final_size must be positive number.";
-#if ZINC_WITH_EXCEPTIONS
-        throw std::invalid_argument(message);
-#else
-        ZINC_LOG(message);
+        zinc_error<std::invalid_argument>("file_final_size must be positive number.");
         return false;
-#endif
     }
 
     auto file_size = get_file_size(file_path);
@@ -595,13 +580,8 @@ bool patch_file(const char* file_path, int64_t file_final_size, size_t block_siz
     auto err = truncate(file_path, max_required_size);
     if (err != 0)
     {
-        const auto message = "Could not truncate file_path to required size.";
-#if ZINC_WITH_EXCEPTIONS
-        throw std::system_error(err, std::system_category(), message);
-#else
-        ZINC_LOG(message);
+        zinc_error<std::system_error>("Could not truncate file_path to required size.", err);
         return false;
-#endif
     }
 
     FileMemoryMap mapping;
@@ -614,23 +594,14 @@ bool patch_file(const char* file_path, int64_t file_final_size, size_t block_siz
         err = truncate(file_path, file_final_size);
         if (err != 0)
         {
-            const auto message = "Could not truncate file_path to file_final_size.";
-#if ZINC_WITH_EXCEPTIONS
-            throw std::system_error(err, std::system_category(), message);
-#else
-            ZINC_LOG(message);
+            zinc_error<std::system_error>("Could not truncate file_path to file_final_size.", err);
             return false;
-#endif
         }
         return true;
     }
-#if ZINC_WITH_EXCEPTIONS
-    else
-        throw std::runtime_error("Unknown error.");
-#else
-    ZINC_LOG("Unknown error.");
+
+    zinc_error<std::runtime_error>("Unknown error.");
     return false;
-#endif
 }
 
 };
