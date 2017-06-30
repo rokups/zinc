@@ -30,14 +30,19 @@ if (NOT DISTUTILS_BUILD AND "${CMAKE_SOURCE_DIR}" STREQUAL "${zinc_SOURCE_DIR}")
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 endif ()
 
+if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+    set (IS_DEBUG ON)
+endif ()
+
 option (WITH_TESTS "Build and run tests" ON)
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_COMPILER_IS_GNUCXX)
+if (IS_DEBUG AND CMAKE_COMPILER_IS_GNUCXX)
     option(WITH_COVERAGE "Build and run tests" ON)
 else ()
     set(WITH_COVERAGE OFF)
 endif ()
-option(WITH_EXCEPTIONS ON)
+option(WITH_EXCEPTIONS "Enable exceptions" ON)
+option(WITH_LOGGING "Enable verbose logging" ${IS_DEBUG})
 
 add_subdirectory(external)
 add_subdirectory(src)
