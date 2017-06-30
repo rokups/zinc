@@ -77,5 +77,6 @@ int truncate(const char* file_path, int64_t file_size);
 int64_t round_up_to_multiple(int64_t value, int64_t multiple_of);
 int64_t get_file_size(const char* file_path);
 int touch(const char* file_path);
+uint64_t fnv1a64(const void* data, size_t dlen);
 
 };

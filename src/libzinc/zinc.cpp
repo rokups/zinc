@@ -81,20 +81,10 @@ StrongHash::StrongHash()
 StrongHash::StrongHash(const void* m, size_t mlen)
 {
 #if ZINC_WITH_STRONG_HASH_FNV
-    auto p = (uint8_t*)m;
-    uint64_t hash = 0xcbf29ce484222325;
+    auto hash = fnv1a64(m, mlen);
     static_assert(sizeof(hash) == sizeof(_data));
-
-    for (size_t i = 0; i < mlen; i++)
-    {
-        hash = hash ^ p[i];
-//        hash = hash * 0x100000001b3;
-        hash += (hash << 1) + (hash << 4) + (hash << 5) +
-                (hash << 7) + (hash << 8) + (hash << 40);
-    }
-    memcpy(_data, &hash, sizeof(_data));
+    *(uint64_t*)_data = hash;
 #else
-    StrongHash hash;
     sha1_ctxt sha1;
     sha1_init(&sha1);
     sha1_loop(&sha1, (const uint8_t*)m, mlen);
@@ -113,7 +103,7 @@ StrongHash& StrongHash::operator=(const StrongHash& other)
     return *this;
 }
 
-bool StrongHash::operator==(const StrongHash& other)
+bool StrongHash::operator==(const StrongHash& other) const
 {
     return memcmp(_data, other._data, sizeof(_data)) == 0;
 }

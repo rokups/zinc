@@ -44,7 +44,7 @@ public:
     StrongHash(const std::string& str);
     StrongHash(const StrongHash& other);
     StrongHash& operator=(const StrongHash& other);
-    bool operator==(const StrongHash& other);
+    bool operator==(const StrongHash& other) const;
     std::string to_string() const;
 
 protected:
@@ -94,7 +94,7 @@ typedef std::vector<DeltaElement>                                               
 /// Strong and weak hashes for each block.
 typedef std::vector<BlockHashes>                                                                 RemoteFileHashList;
 /// A callback that should obtain block data at specified index and return it.
-typedef std::function<ByteArray(int64_t block_index, size_t block_size)>                          FetchBlockCallback;
+typedef std::function<ByteArray(int64_t block_index, size_t block_size)>                         FetchBlockCallback;
 /// A callback for reporting progress. Return true if patching should continue, false if patching should terminate.
 typedef std::function<bool(int64_t bytes_done_now, int64_t bytes_done_total, int64_t file_size)> ProgressCallback;
 
