@@ -27,23 +27,46 @@
 #include <stdarg.h>
 #include <assert.h>
 #include <climits>
-#if ZINC_WITH_EXCEPTIONS
-#   include <exception>
-#endif
-#if __cplusplus >= 201402L
+#include <exception>
+#include <system_error>
+#include "Utilities.hpp"
+
+#if __cplusplus >= 201402L && 0
 #   pragma GCC diagnostic push
 #   pragma GCC diagnostic ignored "-Wshift-count-overflow"
 #   include <flat_hash_map.hpp>
 #   pragma GCC diagnostic pop
 #   define ZINC_USE_SKA_FLAT_HASH_MAP 1
+
+struct StrongHashHashFunction
+{
+    size_t operator()(const zinc::StrongHash& strong)
+    {
+        return (size_t)zinc::fnv1a64(strong.data(), strong.size());
+    }
+
+    typedef ska::power_of_two_hash_policy hash_policy;
+};
 #else
 #   include <unordered_map>
+
+namespace std
+{
+    template <>
+    struct hash<zinc::StrongHash>
+    {
+        std::size_t operator()(const zinc::StrongHash& strong) const
+        {
+            return (size_t)zinc::fnv1a64(strong.data(), strong.size());
+        }
+    };
+}
 #endif
+
 #if ZINC_WITH_STRONG_HASH_SHA1
 #   include "sha1.h"
 #endif
 #include "RollingChecksum.hpp"
-#include "Utilities.hpp"
 
 
 namespace zinc
@@ -251,9 +274,9 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
     }
 
     DeltaMap delta;
-    delta.reserve(hashes.size());
+    delta.map.reserve(hashes.size());
     for (size_t block_index = 0; block_index < hashes.size(); block_index++)
-        delta.push_back(DeltaElement(block_index, block_index * block_size));
+        delta.map.push_back(DeltaElement(block_index, block_index * block_size));
 
     if (!file_data)
     {
@@ -263,21 +286,27 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
 
     // Sort hashes for easier lookup
 #if ZINC_USE_SKA_FLAT_HASH_MAP
-    ska::flat_hash_map<WeakHash, std::vector<std::pair<int32_t, const BlockHashes*>>> lookup_table;
+    ska::flat_hash_map<WeakHash, std::vector<std::pair<int64_t, const BlockHashes*>>> lookup_table;
     lookup_table.reserve(hashes.size());
+    ska::flat_hash_map<StrongHash, std::set<int64_t>, StrongHashHashFunction> identical_blocks;
 #else
-    std::unordered_map<WeakHash, std::vector<std::pair<int32_t, const BlockHashes*>>> lookup_table;
+    std::unordered_map<WeakHash, std::vector<std::pair<int64_t, const BlockHashes*>>> lookup_table;
+    std::unordered_map<StrongHash, std::set<int64_t>> identical_blocks;
 #endif
+
+
     RollingChecksum weak;
     const uint8_t* fp = (const uint8_t*)file_data;
     int64_t last_progress_report = 0;
     int64_t bytes_consumed = 0;
     {
-        int32_t block_index = 0;
+        int64_t block_index = 0;
         for (auto it = hashes.begin(); it != hashes.end(); it++)
         {
             auto& h = *it;
-            lookup_table[h.weak].push_back(std::make_pair(block_index++, &h));
+            lookup_table[h.weak].push_back(std::make_pair(block_index, &h));
+            identical_blocks[h.strong].insert(block_index);
+            block_index++;
         }
     }
 
@@ -317,7 +346,7 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
         }
 
         auto weak_digest = weak.digest();
-        auto it = lookup_table.find(weak_digest);
+        auto it = lookup_table.find((WeakHash)weak_digest);
         if (it != lookup_table.end())
         {
             auto& block_list = it->second;
@@ -328,13 +357,34 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
                 const BlockHashes& h = *pair.second;
                 if (strong_hash == h.strong)
                 {
-                    int32_t this_block_index = pair.first;
-                    delta[this_block_index].local_offset = w_start - fp;
+                    int64_t this_block_index = pair.first;
+                    auto local_offset = w_start - fp;
+                    auto block_offset = this_block_index * block_size;
+
+                    // In some cases current block may contain identical data with some later blocks. However these
+                    // later blocks may already have correct data present. This check avoids moving data between blocks
+                    // if they are identical already.
+                    if (local_offset != block_offset && StrongHash(&fp[block_offset], block_size) == strong_hash)
+                    {
+                        // Block at `this_block_index` contains identical data as currently inspected block. No need
+                        // to update that block.
+                        continue;
+                    }
+
+                    delta.map[this_block_index].local_offset = w_start - fp;
                     weak.clear();
                 }
             }
         }
     }
+
+    // Remove lists of identical hashes if list has one entry. In this case block is not identical with any other block.
+    for (auto it = identical_blocks.begin(); it != identical_blocks.end(); it++)
+    {
+        if (it->second.size() > 1)
+            delta.identical_blocks.push_back(std::move(it->second));
+    }
+
     // Ensure that 100% of progress is reported.
     if (report_progress)
     {
@@ -384,7 +434,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
     std::vector<std::vector<DeltaElement>> ref_cache((unsigned int)(file_size / block_size));
     {
         size_t block_index = 0;
-        for (auto it = delta.begin(); it != delta.end(); it++)
+        for (auto it = delta.map.begin(); it != delta.map.end(); it++)
         {
             auto& delta_element = *it;
             // Only keep record of elements that require data from other parts of the file. Anything else is irrelevant.
@@ -398,9 +448,9 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
     // overwritten.
 #if ZINC_USE_SKA_FLAT_HASH_MAP
     ska::flat_hash_map<int64_t, ByteArrayRef> block_cache;
-    block_cache.reserve(std::max((size_t)10, delta.size() / 10));
+    block_cache.reserve(std::max((size_t)10, delta.map.size() / 10));
 #else
-    std::unordered_map<size_t, ByteArrayRef> block_cache;
+    std::unordered_map<int64_t, ByteArrayRef> block_cache;
 #endif
 
     std::vector<int64_t> priority_index;
@@ -427,38 +477,50 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
         priority_index.push_back(cacheable.block_index);
     };
 
-    while (delta.size())
+    // TODO: This is inefficient.
+    auto find_identical_siblings = [&](int64_t block_index) -> std::set<int64_t>
     {
-        DeltaElement de;
-        if (priority_index.size())
+        for (auto index_set: delta.identical_blocks)
+        {
+            auto it = index_set.find(block_index);
+            if (it != index_set.end())
+                return index_set;
+        }
+        return std::set<int64_t>();
+    };
+
+    std::unordered_map<int64_t, DeltaElement> completed;
+    while (!delta.is_empty())
+    {
+        DeltaElement* de = 0;
+        bool priority_block = priority_index.size() > 0;
+        if (priority_block)
         {
             // Handle blocks which have data cached first so cache can be cleared up.
             auto index = priority_index.back();
-            if (index >= delta.size())
+            if (index >= delta.map.size())
             {
                 // This block was already handled normally.
                 priority_index.pop_back();
                 continue;
             }
-            auto& de_ref = delta[index];
-            de = de_ref;
-            de_ref.block_index = -1;                // Mark block as invalid so it is not handled twice in this loop.
+            de = &delta.map[index];
             priority_index.pop_back();
         }
         else
         {
             // Handle blocks normally, walking from the back of the file.
-            de = delta.back();
-            delta.pop_back();
-            if (!de.is_valid())
+            de = &delta.map.back();
+            if (!de->is_valid())
             {
                 // This block was already handled by prioritizing cached blocks.
+                delta.map.pop_back();
                 continue;
             }
         }
 
         // Correct data is already in place.
-        if (!de.is_done())
+        if (!de->is_done())
         {
             // Cache data if writing current block overwrites data needed by any other blocks.
             {
@@ -468,8 +530,8 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                 // Check three clusters of cacheable blocks. Blocks in these clusters have a chance to overlap with
                 // current position we are about to write. If any block overlaps with current block - data required for
                 // that block will be cached.
-                for (auto check_index = std::max<int64_t>(de.block_index - 1, 0),
-                          end_index = std::min<int64_t>(de.block_index + 2, ref_cache.size());
+                for (auto check_index = std::max<int64_t>(de->block_index - 1, 0),
+                          end_index = std::min<int64_t>(de->block_index + 2, ref_cache.size());
                      check_index < end_index; check_index++)
                 {
                     auto& subcache = ref_cache[check_index];
@@ -477,7 +539,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                     {
                         auto& cacheable = *it;
                         // Make sure block requires data from position that overlaps with current block.
-                        if (llabs(cacheable.local_offset - de.block_offset) < block_size)
+                        if (llabs(cacheable.local_offset - de->block_offset) < block_size)
                         {
                             if (cached_blocks > 0)
                                 cache_block(cacheable);
@@ -494,7 +556,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                     }
                 }
 
-                if (cached_blocks == 1 && maybe_cache.block_index == de.block_index)
+                if (cached_blocks == 1 && maybe_cache.block_index == de->block_index)
                 {
                     // If we have only one block to cache and it's block index matches current one - we can be sure that
                     // moving data will not corrupt anything therefore we avoid block caching. On this loop iteration
@@ -509,46 +571,80 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                 }
             }
 
-            if (de.is_download())
+            if (de->is_download())
             {
-                ZINC_LOG("% 4d offset download", de.block_offset);
-                auto data = get_data(de.block_index, block_size);
-                memcpy(&fp[de.block_offset], &data.front(), data.size());
+                auto identical_siblings = find_identical_siblings(de->block_index);
+
+                bool data_copied = false;
+                if (identical_siblings.size() > 0)
+                {
+                    for (auto identical_index: identical_siblings)
+                    {
+                        auto completed_it = completed.find(identical_index);
+                        if (completed_it != completed.end())
+                        {
+                            // Should `completed` be cleaned up here?
+                            ZINC_LOG("% 4d offset use from % 4d", de->block_offset, completed_it->second.block_offset);
+                            memmove(&fp[de->block_offset], &fp[completed_it->second.block_offset], block_size);
+                            data_copied = true;
+                            break;
+                        }
+                    }
+                }
+
+                // There were no identical siblings or none of them were downloaded yet.
+                if (!data_copied)
+                {
+                    ZINC_LOG("% 4d offset download", de->block_offset);
+                    auto data = get_data(de->block_index, block_size);
+                    memcpy(&fp[de->block_offset], &data.front(), data.size());
+                }
             }
             else
             {
-                auto it_cache = block_cache.find(de.local_offset);
+                auto it_cache = block_cache.find(de->local_offset);
                 if (it_cache != block_cache.end())
                 {   // Use cached block if it exists
                     ByteArrayRef& cached_block = it_cache->second;
                     cached_block.refcount--;
-                    memmove(&fp[de.block_offset], &cached_block.data.front(), cached_block.data.size());
-                    ZINC_LOG("% 4d offset using cached offset %d", de.block_offset, de.local_offset);
+                    memmove(&fp[de->block_offset], &cached_block.data.front(), cached_block.data.size());
+                    ZINC_LOG("% 4d offset using cached offset %d", de->block_offset, de->local_offset);
 
                     // Remove block from cache only if delta map does not reference block later
                     if (cached_block.refcount == 0)
                     {
                         block_cache.erase(it_cache);
-                        ZINC_LOG("% 4d offset -cache", de.local_offset);
+                        ZINC_LOG("% 4d offset -cache", de->local_offset);
                     }
                 }
                 else
                 {   // Copy block from later file position
-                    memmove(&fp[de.block_offset], &fp[de.local_offset], block_size);
-                    ZINC_LOG("% 4d offset using file data offset %d", de.block_offset, de.local_offset);
+                    memmove(&fp[de->block_offset], &fp[de->local_offset], block_size);
+                    ZINC_LOG("% 4d offset using file data offset %d", de->block_offset, de->local_offset);
                     // Delete handled block from reference cache lookup table if it exists there. This prevents handled
                     // blocks form getting cached as that cached data would not be needed any more.
-                    auto& subcache = ref_cache[de.local_offset / block_size];
-                    auto it = std::find(subcache.begin(), subcache.end(), de);
+                    auto& subcache = ref_cache[de->local_offset / block_size];
+                    auto it = std::find(subcache.begin(), subcache.end(), *de);
                     if (it != subcache.end())
                         subcache.erase(it);
                 }
             }
         }
 
+        if (priority_block)
+        {
+            completed[de->block_index] = *de;
+            de->block_index = -1;                // Mark block as invalid so it is not handled twice in this loop.
+        }
+        else
+        {
+            completed[de->block_index] = std::move(*de);
+            delta.map.pop_back();
+        }
+
         if (report_progress)
         {
-            if (!report_progress(block_size, file_size - delta.size() * block_size, file_size))
+            if (!report_progress(block_size, file_size - delta.map.size() * block_size, file_size))
             {
                 ZINC_LOG("User interrupted patch_file().");
                 return false;
@@ -576,7 +672,7 @@ bool patch_file(const char* file_path, int64_t file_final_size, size_t block_siz
     }
 
     // Local file must be at least as big as remote file and it must be padded to size multiple of block_size.
-    auto max_required_size = std::max<int64_t>(block_size * delta.size(), round_up_to_multiple(file_size, block_size));
+    auto max_required_size = std::max<int64_t>(block_size * delta.map.size(), round_up_to_multiple(file_size, block_size));
     auto err = truncate(file_path, max_required_size);
     if (err != 0)
     {

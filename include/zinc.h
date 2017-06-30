@@ -24,6 +24,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <vector>
 #include <functional>
 #include <stdint.h>
@@ -46,6 +47,8 @@ public:
     StrongHash& operator=(const StrongHash& other);
     bool operator==(const StrongHash& other) const;
     std::string to_string() const;
+    void* data() const { return (void*)&_data; }
+    size_t size() const { return sizeof(_data); }
 
 protected:
 #if ZINC_WITH_STRONG_HASH_FNV
@@ -89,8 +92,6 @@ struct DeltaElement
 };
 
 typedef std::vector<uint8_t>                                                                     ByteArray;
-/// A list of offsets of currenty present data in not yet updated file. -1 value signifies a missing block.
-typedef std::vector<DeltaElement>                                                                DeltaMap;
 /// Strong and weak hashes for each block.
 typedef std::vector<BlockHashes>                                                                 RemoteFileHashList;
 /// A callback that should obtain block data at specified index and return it.
@@ -98,6 +99,15 @@ typedef std::function<ByteArray(int64_t block_index, size_t block_size)>        
 /// A callback for reporting progress. Return true if patching should continue, false if patching should terminate.
 typedef std::function<bool(int64_t bytes_done_now, int64_t bytes_done_total, int64_t file_size)> ProgressCallback;
 
+struct DeltaMap
+{
+    /// A list of offsets of currenty present data in not yet updated file. -1 value signifies a missing block.
+    std::vector<DeltaElement> map;
+    /// Groups of block indexes whose content is identical. Used to avoid downloading same content multiple times.
+    std::vector<std::set<int64_t>> identical_blocks;
+    /// Return true if delta map is empty.
+    bool is_empty() const { return map.empty(); }
+};
 
 /*!
  * Calculates strong and weak checksums for every block in the passed memory.

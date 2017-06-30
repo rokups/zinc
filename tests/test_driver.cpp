@@ -106,7 +106,7 @@ BOOST_AUTO_TEST_CASE (SyncFiles)
     auto hashes = zinc::get_block_checksums(file_remote, 5);
     BOOST_CHECK(hashes.size() > 0);
     auto delta = zinc::get_differences_delta(file_local, 5, hashes);
-    BOOST_CHECK(delta.size() > 0);
+    BOOST_CHECK(delta.map.size() > 0);
     BOOST_CHECK(zinc::patch_file(file_local, zinc::get_file_size(file_remote), 5, delta, get_data) == true);
 
     zinc::ByteArray remote_data;
@@ -143,4 +143,9 @@ BOOST_AUTO_TEST_CASE (FuzzTest1)
 BOOST_AUTO_TEST_CASE (FuzzTest2)
 {
     BOOST_CHECK(data_sync_test(",hI|J@Q\\so}:6f=_yoy\\so}:6f=_\\so}:6f=_yo", "}:6f=_yoyL?k,hI|J@Q\\soOsD;E}CvfC]OS!G5", 5));
+}
+
+BOOST_AUTO_TEST_CASE (IdenticalBlockDownload)
+{
+    BOOST_CHECK(data_sync_test("1234_1234_000001234_", "00000000000000000000", 5));
 }

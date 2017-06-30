@@ -51,7 +51,7 @@ PYBIND11_PLUGIN(pyzinc)
         .def_readonly("block_offset", &DeltaElement::block_offset);
 
     py::bind_vector<RemoteFileHashList>(m, "RemoteFileHashList");
-    py::bind_vector<DeltaMap>(m, "DeltaMap");
+    py::class_<DeltaMap>(m, "DeltaMap");
     py::bind_vector<ByteArray>(m, "ByteArray");
 
     m.def("get_block_checksums", (RemoteFileHashList(*)(const void*, int64_t, size_t, const ProgressCallback&))&get_block_checksums, "");
