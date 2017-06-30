@@ -21,28 +21,5 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-cmake_minimum_required(VERSION 3.1)
-project(zinc)
-
-if (NOT DISTUTILS_BUILD AND "${CMAKE_SOURCE_DIR}" STREQUAL "${zinc_SOURCE_DIR}")
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-endif ()
-
-option (WITH_TESTS "Build and run tests" ON)
-
-if (CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_COMPILER_IS_GNUCXX)
-    option(WITH_COVERAGE "Build and run tests" ON)
-else ()
-    set(WITH_COVERAGE OFF)
-endif ()
-option(WITH_EXCEPTIONS ON)
-
-add_subdirectory(external)
-add_subdirectory(src)
-
-if (WITH_TESTS)
-    enable_testing()
-    add_subdirectory(tests)
-endif()
+pybind11_add_module(pyzinc pyzinc.cpp)
+target_link_libraries(pyzinc PUBLIC zinc)

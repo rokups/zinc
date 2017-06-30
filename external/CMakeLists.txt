@@ -22,8 +22,7 @@
 # SOFTWARE.
 #
 
-add_library(pybind11 INTERFACE)
-target_include_directories(pybind11 INTERFACE pybind11/include)
+add_subdirectory(pybind11)
 
 add_library(flat_hash_map INTERFACE)
 target_include_directories(flat_hash_map INTERFACE flat_hash_map)
