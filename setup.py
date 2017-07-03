@@ -72,7 +72,8 @@ class CMakeBuild(build_ext):
 
     def build_extension(self, ext):
         extdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
-        cmake_args = ['-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=' + extdir, '-DPYTHON_EXECUTABLE=' + sys.executable]
+        cmake_args = cmake_definitions[:]
+        cmake_args += ['-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=' + extdir, '-DPYTHON_EXECUTABLE=' + sys.executable]
 
         cfg = 'Debug' if self.debug else 'Release'
         build_args = ['--config', cfg]
@@ -89,7 +90,7 @@ class CMakeBuild(build_ext):
 
         if not os.path.exists(self.build_temp):
             os.makedirs(self.build_temp)
-        print(self.build_temp)
+
         subprocess.check_call(['cmake', ext.sourcedir] + cmake_args, cwd=self.build_temp)
         subprocess.check_call(['cmake', '--build', '.'] + build_args, cwd=self.build_temp)
 
@@ -98,7 +99,7 @@ setup(
     name='zinc',
     version='0.0.1',
     author='Rokas Kupstys',
-    description='Example utility on usage of libzinc',
+    description='libzinc bindings and file synchronization utility.',
     license='MIT',
     url='https://github.com/rokups/zinc',
     classifiers=[
@@ -111,5 +112,8 @@ setup(
     ],
     scripts=['bin/zinc'],
     ext_modules=[CMakeExtension('pyzinc')],
-    cmdclass={'build_ext': CMakeBuild}
+    cmdclass={'build_ext': CMakeBuild},
+    install_requires=[
+        'progressbar2'
+    ]
 )

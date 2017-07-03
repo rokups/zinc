@@ -3,5 +3,7 @@ cmake-build-*
 .idea
 .directory
 build
+dist
+*.egg-info
 *.so
 *.pyd
