@@ -1,5 +1,4 @@
-#namespace zinc { StrongHash get_strong_hash(const void* data, size_t len); }
-
+#
 # MIT License
 #
 # Copyright (c) 2017 Rokas Kupstys
@@ -23,7 +22,7 @@
 # SOFTWARE.
 #
 add_subdirectory(libzinc)
-add_subdirectory(zinc)
+add_subdirectory(pyzinc)
 if (NOT WIN32)
     add_subdirectory(fuzzer)
 endif ()

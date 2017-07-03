@@ -109,7 +109,7 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Topic :: Internet :: WWW/HTTP',
     ],
-    scripts=['src/zinc/zinc'],
+    scripts=['bin/zinc'],
     ext_modules=[CMakeExtension('pyzinc')],
     cmdclass={'build_ext': CMakeBuild}
 )
