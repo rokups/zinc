@@ -24,19 +24,41 @@
 #pragma once
 
 
-#include <stdint.h>
-#include <string.h>
+#include <exception>
+#include <system_error>
+#include <cstdarg>
 
 
 namespace zinc
 {
 
-#if _WIN32
-std::wstring to_wstring(const std::string& str);
-int truncate(const char* file_path, int64_t file_size);
+inline void zinc_log(const char* format, ...)
+{
+#if ZINC_WITH_LOGGING
+    va_list ap;
+    va_start(ap, format);
+    vfprintf(stderr, format, ap);
+    fprintf(stderr, "\n");
+    fflush(stderr);
 #endif
-int64_t round_up_to_multiple(int64_t value, int64_t multiple_of);
-int64_t get_file_size(const char* file_path);
-int touch(const char* file_path);
+}
 
-};
+template<typename T> inline void zinc_error(const char* message, int error=0)
+{
+#if ZINC_WITH_EXCEPTIONS
+    throw T(message);
+#else
+    zinc_log(message);
+#endif
+}
+
+template<> inline void zinc_error<std::system_error>(const char* message, int error)
+{
+#if ZINC_WITH_EXCEPTIONS
+    throw std::system_error(error, std::system_category(), message);
+#else
+    zinc_log(message);
+#endif
+}
+
+}

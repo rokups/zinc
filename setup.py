@@ -40,12 +40,12 @@ def has_flag(flag):
     return False
 
 cmake_definitions = [
-    '-DWITH_EXCEPTIONS=1',
-    '-DDISTUTILS_BUILD=1',
+    '-DZINC_WITH_EXCEPTIONS=1',
+    '-DZINC_DISTUTILS_BUILD=1',
 ]
 
 if has_flag('--strong-hash-fnv'):
-    cmake_definitions.append('-DWITH_STRONG_HASH_FNV=1')
+    cmake_definitions.append('-DZINC_WITH_STRONG_HASH_FNV=1')
 
 
 class CMakeExtension(Extension):

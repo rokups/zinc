@@ -21,17 +21,20 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#include "zinc.h"
+#include "zinc/zinc.h"
 #include <cstring>
 #include <algorithm>
-#include <stdarg.h>
 #include <assert.h>
 #include <climits>
-#include <exception>
-#include <system_error>
+#include <unordered_map>
+#include "zinc_error.hpp"
 #include "Utilities.hpp"
+#include "mmap/FileMemoryMap.h"
+#include "RollingChecksum.hpp"
+#include "crypto/fnv1a.h"
 
-#if __cplusplus >= 201402L && 0
+
+#if __cplusplus >= 201402L
 #   pragma GCC diagnostic push
 #   pragma GCC diagnostic ignored "-Wshift-count-overflow"
 #   include <flat_hash_map.hpp>
@@ -48,8 +51,6 @@ struct StrongHashHashFunction
     typedef ska::power_of_two_hash_policy hash_policy;
 };
 #else
-#   include <unordered_map>
-
 namespace std
 {
     template <>
@@ -63,11 +64,6 @@ namespace std
 }
 #endif
 
-#if ZINC_WITH_STRONG_HASH_SHA1
-#   include "sha1.h"
-#endif
-#include "RollingChecksum.hpp"
-
 
 namespace zinc
 {
@@ -78,94 +74,7 @@ struct ByteArrayRef
     ByteArray data;
 };
 
-inline void ZINC_LOG(const char *format, ...)
-{
-#if ZINC_WITH_DEBUG
-    va_list ap;
-    va_start(ap, format);
-    vfprintf(stderr, format, ap);
-    fprintf(stderr, "\n");
-    fflush(stderr);
-#endif
-}
-
 const size_t RR_NO_MATCH = (const size_t)-1;
-
-template<typename T> void zinc_error(const char* message, int error=0)
-{
-#if ZINC_WITH_EXCEPTIONS
-    throw T(message);
-#else
-    ZINC_LOG(message);
-#endif
-}
-
-template<> void zinc_error<std::system_error>(const char* message, int error)
-{
-#if ZINC_WITH_EXCEPTIONS
-    throw std::system_error(error, std::system_category(), message);
-#else
-    ZINC_LOG(message);
-#endif
-}
-
-StrongHash::StrongHash()
-{
-    memset(_data, 0, sizeof(_data));
-}
-
-StrongHash::StrongHash(const void* m, size_t mlen)
-{
-#if ZINC_WITH_STRONG_HASH_FNV
-    auto hash = fnv1a64(m, mlen);
-    static_assert(sizeof(hash) == sizeof(_data));
-    *(uint64_t*)_data = hash;
-#else
-    sha1_ctxt sha1;
-    sha1_init(&sha1);
-    sha1_loop(&sha1, (const uint8_t*)m, mlen);
-    sha1_result(&sha1, _data);
-#endif
-}
-
-StrongHash::StrongHash(const StrongHash& other)
-{
-    memcpy(_data, other._data, sizeof(_data));
-}
-
-StrongHash& StrongHash::operator=(const StrongHash& other)
-{
-    memcpy(_data, other._data, sizeof(_data));
-    return *this;
-}
-
-bool StrongHash::operator==(const StrongHash& other) const
-{
-    return memcmp(_data, other._data, sizeof(_data)) == 0;
-}
-
-std::string StrongHash::to_string() const
-{
-    std::string result;
-    result.resize(sizeof(_data) * 2);
-    for (size_t i = 0; i < sizeof(_data); i++)
-        sprintf(&result.front() + i * 2, "%02x", _data[i]);
-    return result;
-}
-
-StrongHash::StrongHash(const std::string& str)
-{
-    if (str.length() < (sizeof(_data) * 2))
-        return;
-
-    char buf[3];
-    for (size_t i = 0; i < sizeof(_data); i++)
-    {
-        memcpy(buf, &str.front() + i * 2, 2);
-        buf[2] = 0;
-        _data[i] = (uint8_t)strtol(buf, 0, 16);
-    }
-}
 
 DeltaElement::DeltaElement(size_t block_index, size_t block_offset)
     : block_index(block_index)
@@ -233,7 +142,7 @@ RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size,
         {
             if (!report_progress(block_size, (block_index + 1) * block_size, file_size))
             {
-                ZINC_LOG("User interrupted get_block_checksums().");
+                zinc_log("User interrupted get_block_checksums().");
                 return RemoteFileHashList();
             }
         }
@@ -280,7 +189,7 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
 
     if (!file_data)
     {
-        ZINC_LOG("File is not present, delta equals to full download.");
+        zinc_log("File is not present, delta equals to full download.");
         return delta;
     }
 
@@ -465,13 +374,13 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
             block.data.resize(block_size, 0);
             memcpy(&block.data.front(), &fp[cacheable.local_offset], block_size);
             block_cache[cacheable.local_offset] = std::move(block);
-            ZINC_LOG("% 4d offset +cache refcount=1", cacheable.local_offset);
+            zinc_log("% 4d offset +cache refcount=1", cacheable.local_offset);
         }
         else
         {
             ByteArrayRef &cached_block = (*block_cache_it).second;
             cached_block.refcount++;
-            ZINC_LOG("% 4d offset +cache refcount=%d", cacheable.local_offset, cached_block.refcount);
+            zinc_log("% 4d offset +cache refcount=%d", cacheable.local_offset, cached_block.refcount);
         }
         // Prioritize cached blocks so we can evict data from cache as soon as possible.
         priority_index.push_back(cacheable.block_index);
@@ -584,7 +493,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                         if (completed_it != completed.end())
                         {
                             // Should `completed` be cleaned up here?
-                            ZINC_LOG("% 4d offset use from % 4d", de->block_offset, completed_it->second.block_offset);
+                            zinc_log("% 4d offset use from % 4d", de->block_offset, completed_it->second.block_offset);
                             memmove(&fp[de->block_offset], &fp[completed_it->second.block_offset], block_size);
                             data_copied = true;
                             break;
@@ -595,7 +504,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                 // There were no identical siblings or none of them were downloaded yet.
                 if (!data_copied)
                 {
-                    ZINC_LOG("% 4d offset download", de->block_offset);
+                    zinc_log("% 4d offset download", de->block_offset);
                     auto data = get_data(de->block_index, block_size);
                     memcpy(&fp[de->block_offset], &data.front(), data.size());
                 }
@@ -608,19 +517,19 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                     ByteArrayRef& cached_block = it_cache->second;
                     cached_block.refcount--;
                     memmove(&fp[de->block_offset], &cached_block.data.front(), cached_block.data.size());
-                    ZINC_LOG("% 4d offset using cached offset %d", de->block_offset, de->local_offset);
+                    zinc_log("% 4d offset using cached offset %d", de->block_offset, de->local_offset);
 
                     // Remove block from cache only if delta map does not reference block later
                     if (cached_block.refcount == 0)
                     {
                         block_cache.erase(it_cache);
-                        ZINC_LOG("% 4d offset -cache", de->local_offset);
+                        zinc_log("% 4d offset -cache", de->local_offset);
                     }
                 }
                 else
                 {   // Copy block from later file position
                     memmove(&fp[de->block_offset], &fp[de->local_offset], block_size);
-                    ZINC_LOG("% 4d offset using file data offset %d", de->block_offset, de->local_offset);
+                    zinc_log("% 4d offset using file data offset %d", de->block_offset, de->local_offset);
                     // Delete handled block from reference cache lookup table if it exists there. This prevents handled
                     // blocks form getting cached as that cached data would not be needed any more.
                     auto& subcache = ref_cache[de->local_offset / block_size];
@@ -646,7 +555,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
         {
             if (!report_progress(block_size, file_size - delta.map.size() * block_size, file_size))
             {
-                ZINC_LOG("User interrupted patch_file().");
+                zinc_log("User interrupted patch_file().");
                 return false;
             }
         }

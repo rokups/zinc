@@ -38,7 +38,7 @@ if (Boost_FOUND)
     endforeach (test_source_file)
 endif ()
 
-if (WITH_COVERAGE)
+if (ZINC_WITH_COVERAGE)
     set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/CMake)
     include(CodeCoverage)
     setup_target_for_coverage(coverage test_driver coverage)

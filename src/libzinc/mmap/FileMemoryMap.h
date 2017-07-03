@@ -25,18 +25,42 @@
 
 
 #include <stdint.h>
-#include <string.h>
 
 
 namespace zinc
 {
 
-#if _WIN32
-std::wstring to_wstring(const std::string& str);
-int truncate(const char* file_path, int64_t file_size);
-#endif
-int64_t round_up_to_multiple(int64_t value, int64_t multiple_of);
-int64_t get_file_size(const char* file_path);
-int touch(const char* file_path);
+class FileMemoryMap
+{
+public:
+    FileMemoryMap();
+    ~FileMemoryMap() { close(); }
 
+    /// Get pointer to mapped memory.
+    void* get_data() { return _data; }
+    /// Get size of mapped memory.
+    int64_t get_size() const { return _size; }
+    /// Verify if file mapping is open.
+    bool is_open() const { return _data && _data != (void*)-1; }
+    /// Map file to memory. If block_size is not 0 then mapped memory segment size will be multiple of block_size.
+    bool open(const char* file_path);
+    /// Close memory mapping.
+    void close();
+
+protected:
+    /// Size of mapped file.
+    int64_t _size;
+    /// Memory of mapped file.
+    void* _data;
+
+#if _WIN32
+    /// Memory mapping file descriptor.
+    HANDLE _fd;
+    HANDLE _mapping;
+#else
+    /// Memory mapping file descriptor.
+    int _fd;
+#endif
 };
+
+}

@@ -21,22 +21,60 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#pragma once
-
-
-#include <stdint.h>
-#include <string.h>
+#include "FileMemoryMap.h"
+#include "zinc_error.hpp"
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <sys/mman.h>
 
 
 namespace zinc
 {
 
-#if _WIN32
-std::wstring to_wstring(const std::string& str);
-int truncate(const char* file_path, int64_t file_size);
-#endif
-int64_t round_up_to_multiple(int64_t value, int64_t multiple_of);
-int64_t get_file_size(const char* file_path);
-int touch(const char* file_path);
+bool FileMemoryMap::open(const char* file_path)
+{
+    struct stat st = {};
+    _fd = ::open(file_path, O_RDWR);
 
-};
+    if (_fd == -1)
+    {
+        zinc_error<std::system_error>("FileMapping could not open file.", errno);
+        return false;
+    }
+
+    if (fstat(_fd, &st) == -1)
+    {
+        zinc_error<std::system_error>("FileMapping could not get file size.", errno);
+        return false;
+    }
+
+    _size = st.st_size;
+
+    _data = mmap(0, _size, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
+    if (!is_open())
+    {
+        zinc_error<std::system_error>("FileMapping could not get map file data.", errno);
+        return false;
+    }
+
+    return true;
+}
+
+/// Close memory mapping.
+void FileMemoryMap::close()
+{
+    if (is_open())
+    {
+        munmap(_data, _size);
+        _data = 0;
+    }
+
+    if (_fd != -1)
+    {
+        ::close(_fd);
+        _fd = -1;
+    }
+}
+
+}

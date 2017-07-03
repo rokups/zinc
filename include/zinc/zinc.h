@@ -23,6 +23,7 @@
  */
 #pragma once
 
+
 #include <map>
 #include <set>
 #include <vector>
@@ -31,32 +32,13 @@
 #if !_WIN32
 #	include <unistd.h>
 #endif
+#include "StrongHash.h"
+
 
 namespace zinc
 {
 
 typedef uint32_t WeakHash;
-
-class StrongHash
-{
-public:
-    StrongHash();
-    StrongHash(const void* m, size_t mlen);
-    StrongHash(const std::string& str);
-    StrongHash(const StrongHash& other);
-    StrongHash& operator=(const StrongHash& other);
-    bool operator==(const StrongHash& other) const;
-    std::string to_string() const;
-    void* data() const { return (void*)&_data; }
-    size_t size() const { return sizeof(_data); }
-
-protected:
-#if ZINC_WITH_STRONG_HASH_FNV
-    uint8_t _data[8];
-#else
-    uint8_t _data[20];
-#endif
-};
 
 struct BlockHashes
 {

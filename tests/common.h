@@ -23,7 +23,7 @@
  */
 #define BOOST_TEST_DYN_LINK
 #include <boost/test/unit_test.hpp>
-#include <zinc.h>
+#include <zinc/zinc.h>
 #include <cstdlib>
 
 zinc::ByteArray string_to_array(const char* string);

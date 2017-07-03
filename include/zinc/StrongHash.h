@@ -24,19 +24,31 @@
 #pragma once
 
 
-#include <stdint.h>
-#include <string.h>
+#include <string>
 
 
 namespace zinc
 {
 
-#if _WIN32
-std::wstring to_wstring(const std::string& str);
-int truncate(const char* file_path, int64_t file_size);
-#endif
-int64_t round_up_to_multiple(int64_t value, int64_t multiple_of);
-int64_t get_file_size(const char* file_path);
-int touch(const char* file_path);
+class StrongHash
+{
+public:
+    StrongHash();
+    StrongHash(const void* m, size_t mlen);
+    StrongHash(const std::string& str);
+    StrongHash(const StrongHash& other);
+    StrongHash& operator=(const StrongHash& other);
+    bool operator==(const StrongHash& other) const;
+    std::string to_string() const;
+    void* data() const { return (void*)&_data; }
+    size_t size() const { return sizeof(_data); }
 
+protected:
+#if ZINC_WITH_STRONG_HASH_FNV
+    uint8_t _data[8];
+#else
+    uint8_t _data[20];
+#endif
 };
+
+}

@@ -22,144 +22,12 @@
  * SOFTWARE.
  */
 #include "Utilities.hpp"
-#if ZINC_WITH_EXCEPTIONS
-#   include <system_error>
-#endif
+#include "zinc_error.hpp"
+#include <sys/stat.h>
+
 
 namespace zinc
 {
-
-FileMemoryMap::FileMemoryMap()
-{
-#if _WIN32
-    _fd = INVALID_HANDLE_VALUE;
-    _mapping = INVALID_HANDLE_VALUE;
-#else
-    _fd = -1;
-#endif
-    _size = 0;
-    _data = 0;
-}
-
-#if _WIN32
-
-bool FileMemoryMap::open(const char* file_path)
-{
-    _fd = CreateFile(file_path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL,
-                     0);
-    if (!_fd || _fd == INVALID_HANDLE_VALUE)
-#if ZINC_WITH_EXCEPTIONS
-        throw std::system_error(GetLastError(), std::system_category(), "FileMapping could not open file.");
-#else
-        return false;
-#endif
-
-    LARGE_INTEGER file_size = {};
-    if (!GetFileSizeEx(_fd, &file_size))
-    {
-#if ZINC_WITH_EXCEPTIONS
-        throw std::system_error(errno, std::system_category(), "FileMapping could not get file size.");
-#else
-        return false;
-#endif
-    }
-    _size = file_size.QuadPart;
-
-    _mapping = CreateFileMapping(_fd, 0, PAGE_READWRITE, file_size.HighPart, file_size.LowPart, 0);
-    if (!_mapping || _mapping == INVALID_HANDLE_VALUE)
-    {
-#if ZINC_WITH_EXCEPTIONS
-        throw std::system_error(GetLastError(), std::system_category(), "FileMapping create file mapping.");
-#else
-        return false;
-#endif
-    }
-
-    _data = MapViewOfFile(_mapping, FILE_MAP_WRITE, 0, 0, _size);
-    if (!is_open())
-    {
-#if ZINC_WITH_EXCEPTIONS
-        throw std::system_error(GetLastError(), std::system_category(), "FileMapping could not get map file data.");
-#else
-        return false;
-#endif
-    }
-    return true;
-}
-
-void FileMemoryMap::close()
-{
-    if (is_open())
-    {
-        UnmapViewOfFile(_data);
-        _data = 0;
-    }
-    if (_mapping && _mapping != INVALID_HANDLE_VALUE)
-    {
-        CloseHandle(_mapping);
-        _mapping = INVALID_HANDLE_VALUE;
-    }
-    if (_fd && _fd != INVALID_HANDLE_VALUE)
-    {
-        CloseHandle(_fd);
-        _fd = INVALID_HANDLE_VALUE;
-    }
-}
-
-#else
-bool FileMemoryMap::open(const char* file_path)
-{
-    struct stat st = {};
-    _fd = ::open(file_path, O_RDWR);
-
-    if (_fd == -1)
-    {
-#if ZINC_WITH_EXCEPTIONS
-        throw std::system_error(errno, std::system_category(), "FileMapping could not open file.");
-#else
-        return false;
-#endif
-    }
-
-    if (fstat(_fd, &st) == -1)
-    {
-#if ZINC_WITH_EXCEPTIONS
-        throw std::system_error(errno, std::system_category(), "FileMapping could not get file size.");
-#else
-        return false;
-#endif
-    }
-
-    _size = st.st_size;
-
-    _data = mmap(0, _size, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
-    if (!is_open())
-    {
-#if ZINC_WITH_EXCEPTIONS
-        throw std::system_error(errno, std::system_category(), "FileMapping could not get map file data.");
-#else
-        return false;
-#endif
-    }
-
-    return true;
-}
-/// Close memory mapping.
-void FileMemoryMap::close()
-{
-    if (is_open())
-    {
-        munmap(_data, _size);
-        _data = 0;
-    }
-
-    if (_fd != -1)
-    {
-        ::close(_fd);
-        _fd = -1;
-    }
-}
-#endif
 
 #if _WIN32
 std::wstring to_wstring(const std::string &str)
@@ -235,21 +103,6 @@ int touch(const char* file_path)
     }
 
     return -1;
-}
-
-uint64_t fnv1a64(const void* data, size_t dlen)
-{
-    auto p = (uint8_t*)data;
-    uint64_t hash = 0xcbf29ce484222325;
-
-    for (size_t i = 0; i < dlen; i++)
-    {
-        hash = hash ^ p[i];
-//        hash = hash * 0x100000001b3;
-        hash += (hash << 1) + (hash << 4) + (hash << 5) +
-                (hash << 7) + (hash << 8) + (hash << 40);
-    }
-    return hash;
 }
 
 }

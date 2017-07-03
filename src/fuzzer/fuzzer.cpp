@@ -23,7 +23,7 @@
  */
 #include <stddef.h>
 #include <stdint.h>
-#include <zinc.h>
+#include <zinc/zinc.h>
 #include <random>
 #include <signal.h>
 #include <cstring>

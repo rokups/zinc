@@ -21,22 +21,22 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#pragma once
-
-
-#include <stdint.h>
-#include <string.h>
+#include "FileMemoryMap.h"
 
 
 namespace zinc
 {
 
+FileMemoryMap::FileMemoryMap()
+{
 #if _WIN32
-std::wstring to_wstring(const std::string& str);
-int truncate(const char* file_path, int64_t file_size);
+    _fd = INVALID_HANDLE_VALUE;
+    _mapping = INVALID_HANDLE_VALUE;
+#else
+    _fd = -1;
 #endif
-int64_t round_up_to_multiple(int64_t value, int64_t multiple_of);
-int64_t get_file_size(const char* file_path);
-int touch(const char* file_path);
+    _size = 0;
+    _data = 0;
+}
 
-};
+}
