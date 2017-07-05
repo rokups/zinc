@@ -42,6 +42,9 @@ def has_flag(flag):
 cmake_definitions = [
     '-DZINC_WITH_EXCEPTIONS=1',
     '-DZINC_DISTUTILS_BUILD=1',
+    '-DZINC_WITH_TESTS=0',
+    '-DZINC_WITH_LOGGING=0',
+    '-DZINC_WITH_COVERAGE=0'
 ]
 
 if has_flag('--strong-hash-fnv'):
