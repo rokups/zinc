@@ -195,12 +195,16 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
 
     // Sort hashes for easier lookup
 #if ZINC_USE_SKA_FLAT_HASH_MAP
-    ska::flat_hash_map<WeakHash, std::vector<std::pair<int64_t, const BlockHashes*>>> lookup_table;
+    ska::flat_hash_map<WeakHash, ska::flat_hash_map<StrongHash, int64_t, StrongHashHashFunction>> lookup_table;
     lookup_table.reserve(hashes.size());
     ska::flat_hash_map<StrongHash, std::set<int64_t>, StrongHashHashFunction> identical_blocks;
+    identical_blocks.reserve(file_size / block_size + 1);
+    ska::flat_hash_map<int64_t, StrongHash> local_hash_cache;
+    local_hash_cache.reserve(file_size / block_size + 1);
 #else
     std::unordered_map<WeakHash, std::vector<std::pair<int64_t, const BlockHashes*>>> lookup_table;
     std::unordered_map<StrongHash, std::set<int64_t>> identical_blocks;
+    std::unordered_map<int64_t, StrongHash> local_hash_cache;
 #endif
 
 
@@ -213,10 +217,17 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
         for (auto it = hashes.begin(); it != hashes.end(); it++)
         {
             auto& h = *it;
-            lookup_table[h.weak].push_back(std::make_pair(block_index, &h));
+            lookup_table[h.weak][h.strong] = block_index;
             identical_blocks[h.strong].insert(block_index);
             block_index++;
         }
+    }
+
+    // Remove lists of identical hashes if list has one entry. In this case block is not identical with any other block.
+    for (auto it = identical_blocks.begin(); it != identical_blocks.end(); it++)
+    {
+        if (it->second.size() > 1)
+            delta.identical_blocks.push_back(std::move(it->second));
     }
 
     auto report_progress_internal = [&]() -> bool
@@ -235,6 +246,7 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
     };
 
     const uint8_t* w_start = fp - block_size;
+    const auto last_local_hash_check_offset = file_size - block_size;
     for (;bytes_consumed < file_size;)
     {
         if (!report_progress_internal())
@@ -254,44 +266,47 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
             ++w_start;
         }
 
-        auto weak_digest = weak.digest();
-        auto it = lookup_table.find((WeakHash)weak_digest);
+        WeakHash weak_digest = weak.digest();
+        auto it = lookup_table.find(weak_digest);
         if (it != lookup_table.end())
         {
-            auto& block_list = it->second;
             auto strong_hash = StrongHash(w_start, current_block_size);
-            for (auto jt = block_list.begin(); jt != block_list.end(); jt++)
+            auto jt = it->second.find(strong_hash);
+            if (jt != it->second.end())
             {
-                auto& pair = *jt;
-                const BlockHashes& h = *pair.second;
-                if (strong_hash == h.strong)
-                {
-                    int64_t this_block_index = pair.first;
-                    auto local_offset = w_start - fp;
-                    auto block_offset = this_block_index * block_size;
+                int64_t this_block_index = jt->second;
+                auto local_offset = w_start - fp;
+                auto block_offset = this_block_index * block_size;
 
-                    // In some cases current block may contain identical data with some later blocks. However these
-                    // later blocks may already have correct data present. This check avoids moving data between blocks
-                    // if they are identical already.
-                    if (local_offset != block_offset && StrongHash(&fp[block_offset], block_size) == strong_hash)
+                // In some cases current block may contain identical data with some later blocks. However these
+                // later blocks may already have correct data present. This check avoids moving data between blocks
+                // if they are identical already.
+                if (local_offset != block_offset && block_offset < last_local_hash_check_offset)
+                {
+                    auto lh_it = local_hash_cache.find(block_offset);
+                    bool is_identical = false;
+                    if (lh_it == local_hash_cache.end())
+                    {
+                        StrongHash local_hash(&fp[block_offset], block_size);
+                        local_hash_cache[block_offset] = local_hash;
+                        is_identical = local_hash == strong_hash;
+                    }
+                    else
+                        is_identical = lh_it->second == strong_hash;
+
+                    if (is_identical)
                     {
                         // Block at `this_block_index` contains identical data as currently inspected block. No need
                         // to update that block.
+                        weak.clear();
                         continue;
                     }
-
-                    delta.map[this_block_index].local_offset = w_start - fp;
-                    weak.clear();
                 }
+
+                delta.map[this_block_index].local_offset = w_start - fp;
+                weak.clear();
             }
         }
-    }
-
-    // Remove lists of identical hashes if list has one entry. In this case block is not identical with any other block.
-    for (auto it = identical_blocks.begin(); it != identical_blocks.end(); it++)
-    {
-        if (it->second.size() > 1)
-            delta.identical_blocks.push_back(std::move(it->second));
     }
 
     // Ensure that 100% of progress is reported.
