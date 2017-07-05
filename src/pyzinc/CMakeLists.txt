@@ -23,3 +23,11 @@
 #
 pybind11_add_module(pyzinc pyzinc.cpp)
 target_link_libraries(pyzinc PUBLIC zinc)
+
+if (ZINC_STANDALONE_BUILD)
+    # In developer builds symlink pyzinc to bin dir where test script is located.
+    add_custom_command(TARGET pyzinc POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+        ARGS -E create_symlink \"$<TARGET_FILE:pyzinc>\" \"${zinc_SOURCE_DIR}/bin/$<TARGET_FILE_NAME:pyzinc>\"
+    )
+endif ()
