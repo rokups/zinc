@@ -30,7 +30,7 @@
 #include <functional>
 #include <stdint.h>
 #if !_WIN32
-#	include <unistd.h>
+#    include <unistd.h>
 #endif
 #include "StrongHash.h"
 
@@ -43,8 +43,8 @@ typedef uint32_t WeakHash;
 struct BlockHashes
 {
     BlockHashes();
-	BlockHashes(const WeakHash& weak, const StrongHash& strong);
-	BlockHashes(const WeakHash& weak, const std::string& strong);
+    BlockHashes(const WeakHash& weak, const StrongHash& strong);
+    BlockHashes(const WeakHash& weak, const std::string& strong);
     BlockHashes(const BlockHashes& other) = default;
     BlockHashes& operator=(const BlockHashes& other) = default;
 
@@ -55,16 +55,16 @@ struct BlockHashes
 struct DeltaElement
 {
     DeltaElement() { }
-	DeltaElement(size_t block_index, size_t block_offset);
+    DeltaElement(size_t block_index, size_t block_offset);
 
-	int64_t block_index = -1;
+    int64_t block_index = -1;
     int64_t local_offset = -1;
     int64_t block_offset = -1;
 
     bool is_download() { return local_offset == -1; }
     bool is_copy()     { return local_offset >= 0 && !is_done(); }
     bool is_done()     { return block_offset == local_offset; }
-	bool is_valid()    { return block_index >= 0 && block_offset >= 0; }
+    bool is_valid()    { return block_index >= 0 && block_offset >= 0; }
     bool operator==(const DeltaElement& other)
     {
         return block_index == other.block_index &&
@@ -140,7 +140,7 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
  * \throws std::system_error
  */
 DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
-							   const ProgressCallback& report_progress = ProgressCallback());
+                               const ProgressCallback& report_progress = ProgressCallback());
 
 /// `file_data` must be at least as big as remote data block.
 /*!
@@ -157,7 +157,7 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
  * \throws std::system_error
  */
 bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
-				const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());
+                const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());
 /*!
  * Sync a local file to remote one.
  * \param file_path a path to a file.
@@ -172,6 +172,6 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
  * \throws std::system_error
  */
 bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
-				const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());
+                const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());
 
 };

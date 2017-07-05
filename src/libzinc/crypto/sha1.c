@@ -36,7 +36,7 @@
  * implemented by Jun-ichiro itojun Itoh <itojun@itojun.org>
  */
 #if !_WIN32
-#	include <sys/param.h>
+#    include <sys/param.h>
 #endif
 #include <string.h>
 #include "sha1.h"

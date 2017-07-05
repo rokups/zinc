@@ -34,7 +34,7 @@ class RollingChecksum
 
 public:
     inline RollingChecksum(const void* data = 0, size_t dlen = 0)
-		: _a(0), _b(0), _count(0)
+        : _a(0), _b(0), _count(0)
     {
         update(data, dlen);
     }
