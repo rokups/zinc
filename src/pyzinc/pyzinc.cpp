@@ -34,6 +34,9 @@ PYBIND11_PLUGIN(pyzinc)
 {
     py::module m("pyzinc", "Python bindings for zinc");
 
+    py::bind_vector<RemoteFileHashList>(m, "RemoteFileHashList");
+    py::bind_vector<ByteArray>(m, "ByteArray");
+
     py::class_<StrongHash>(m, "StrongHash")
         .def(py::init<>())
         .def(py::init<const void*, size_t>())
@@ -50,9 +53,10 @@ PYBIND11_PLUGIN(pyzinc)
         .def_readonly("local_offset", &DeltaElement::local_offset)
         .def_readonly("block_offset", &DeltaElement::block_offset);
 
-    py::bind_vector<RemoteFileHashList>(m, "RemoteFileHashList");
-    py::class_<DeltaMap>(m, "DeltaMap");
-    py::bind_vector<ByteArray>(m, "ByteArray");
+    py::class_<DeltaMap>(m, "DeltaMap")
+        .def_readonly("map", &DeltaMap::map)
+        .def_readonly("identical_blocks", &DeltaMap::identical_blocks)
+        .def("is_empty", &DeltaMap::is_empty);
 
     m.def("get_block_checksums", (RemoteFileHashList(*)(const void*, int64_t, size_t, const ProgressCallback&))&get_block_checksums, "");
     m.def("get_block_checksums", (RemoteFileHashList(*)(const char*, size_t, const ProgressCallback&))&get_block_checksums, "");
