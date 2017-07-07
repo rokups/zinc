@@ -247,6 +247,9 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
 
     const uint8_t* w_start = fp - block_size;
     const auto last_local_hash_check_offset = file_size - block_size;
+    WeakHash last_failed_weak = 0;
+    bool last_failed = false;
+
     for (;bytes_consumed < file_size;)
     {
         if (!report_progress_internal())
@@ -267,6 +270,20 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
         }
 
         WeakHash weak_digest = weak.digest();
+        if (last_failed && last_failed_weak == weak_digest)
+        {
+            // Corner-case optimization. Some data may contain repeating patterns of identical data that is present
+            // in local file but not present in remote file. In such cases lookup_table and StrongHash calculations
+            // would be performed continously for every byte consumed by rolling checksum and would yield no
+            // results. We save last failed weak checksum and when window is moved by one byte and when new rolling
+            // checksum is identical to last one we assume there will be no match and continue rolling in next byte.
+            // This optimization may cause some data blocks to not be reused in rare cases of weak checksum
+            // collisions, however it saves us from some data slowing algorithm to a crawl therefore it is
+            // well-worth trading in few blocks of bandwidth for speed gain. This issue was observed in updating
+            // archlinux-2017.06.01-x86_64.iso -> archlinux-2017.07.01-x86_64.iso
+            continue;
+        }
+
         auto it = lookup_table.find(weak_digest);
         if (it != lookup_table.end())
         {
@@ -274,6 +291,9 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
             auto jt = it->second.find(strong_hash);
             if (jt != it->second.end())
             {
+                if (last_failed)
+                    last_failed = false;
+
                 int64_t this_block_index = jt->second;
                 auto local_offset = w_start - fp;
                 auto block_offset = this_block_index * block_size;
@@ -306,6 +326,16 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
                 delta.map[this_block_index].local_offset = w_start - fp;
                 weak.clear();
             }
+            else
+            {
+                last_failed = true;
+                last_failed_weak = weak_digest;
+            }
+        }
+        else
+        {
+            last_failed = true;
+            last_failed_weak = weak_digest;
         }
     }
 

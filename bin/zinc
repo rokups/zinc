@@ -58,8 +58,10 @@ class ProgressBar(object):
     def _reset(self, message, max_value):
         self.one_percent = 100.0 / max_value
         self.message = message
+        self._max_value = max_value
 
     def reset(self, message, max_value):
+        self.update(self._max_value)
         self._reset(message, max_value)
         print()
 
