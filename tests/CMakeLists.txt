@@ -29,7 +29,7 @@ if (Boost_FOUND)
     foreach (test_source_file ${TEST_SRCS})
         get_filename_component (test_name ${test_source_file} NAME_WE)
         add_executable (${test_name} ${test_source_file} common.h common.cpp)
-        target_link_libraries (${test_name} -lasan zinc ${Boost_LIBRARIES} -lstdc++ -lgcov)
+        target_link_libraries (${test_name} -lasan libzinc ${Boost_LIBRARIES} -lstdc++ -lgcov)
         target_compile_options(${test_name} PRIVATE -fsanitize=address -g -O0 -fprofile-arcs -ftest-coverage)
         add_test(
             NAME ${test_name}

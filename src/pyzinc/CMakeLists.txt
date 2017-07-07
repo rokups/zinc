@@ -22,7 +22,7 @@
 # SOFTWARE.
 #
 pybind11_add_module(pyzinc pyzinc.cpp)
-target_link_libraries(pyzinc PUBLIC zinc)
+target_link_libraries(pyzinc PUBLIC libzinc)
 
 if (ZINC_STANDALONE_BUILD)
     # In developer builds symlink pyzinc to bin dir where test script is located.

@@ -22,5 +22,5 @@
 # SOFTWARE.
 #
 add_executable(fuzzer fuzzer.cpp)
-target_link_libraries(fuzzer zinc)
+target_link_libraries(fuzzer libzinc)
 target_compile_options(fuzzer PRIVATE -std=gnu++11)

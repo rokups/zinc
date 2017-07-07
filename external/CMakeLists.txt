@@ -26,3 +26,9 @@ add_subdirectory(pybind11)
 
 add_library(flat_hash_map INTERFACE)
 target_include_directories(flat_hash_map INTERFACE flat_hash_map)
+
+add_library(json INTERFACE)
+target_include_directories(json INTERFACE json)
+
+add_library(CLI11 INTERFACE)
+target_include_directories(CLI11 INTERFACE CLI11)
