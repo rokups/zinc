@@ -27,42 +27,14 @@
 #include <assert.h>
 #include <climits>
 #include <unordered_map>
+#include <mutex>
+#include "mmap/FileMemoryMap.h"
+#include "crypto/fnv1a.h"
 #include "zinc_error.hpp"
 #include "Utilities.hpp"
-#include "mmap/FileMemoryMap.h"
 #include "RollingChecksum.hpp"
-#include "crypto/fnv1a.h"
-
-
-#if __cplusplus >= 201402L
-#   pragma GCC diagnostic push
-#   pragma GCC diagnostic ignored "-Wshift-count-overflow"
-#   include <flat_hash_map.hpp>
-#   pragma GCC diagnostic pop
-#   define ZINC_USE_SKA_FLAT_HASH_MAP 1
-
-struct StrongHashHashFunction
-{
-    size_t operator()(const zinc::StrongHash& strong)
-    {
-        return (size_t)zinc::fnv1a64(strong.data(), strong.size());
-    }
-
-    typedef ska::power_of_two_hash_policy hash_policy;
-};
-#else
-namespace std
-{
-    template <>
-    struct hash<zinc::StrongHash>
-    {
-        std::size_t operator()(const zinc::StrongHash& strong) const
-        {
-            return (size_t)zinc::fnv1a64(strong.data(), strong.size());
-        }
-    };
-}
-#endif
+#include "DeltaResolver.h"
+#include "hashmaps.h"
 
 
 namespace zinc
@@ -174,183 +146,50 @@ RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size,
 }
 
 DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
-                               const RemoteFileHashList& hashes, const ProgressCallback& report_progress)
+                               const RemoteFileHashList& hashes, const ProgressCallback& report_progress,
+                               size_t max_threads)
 {
+    if (max_threads < 1)
+        max_threads = std::thread::hardware_concurrency();
+
     if (file_size % block_size)
     {
         zinc_error<std::invalid_argument>("file_size must be multiple of block_size.");
         return DeltaMap();
     }
 
-    DeltaMap delta;
-    delta.map.reserve(hashes.size());
-    for (size_t block_index = 0; block_index < hashes.size(); block_index++)
-        delta.map.push_back(DeltaElement(block_index, block_index * block_size));
+    DeltaResolver resolver(file_data, file_size, block_size, hashes, report_progress, max_threads);
 
     if (!file_data)
     {
         zinc_log("File is not present, delta equals to full download.");
-        return delta;
+        return resolver.delta;
     }
 
-    // Sort hashes for easier lookup
-#if ZINC_USE_SKA_FLAT_HASH_MAP
-    ska::flat_hash_map<WeakHash, ska::flat_hash_map<StrongHash, int64_t, StrongHashHashFunction>> lookup_table;
-    lookup_table.reserve(hashes.size());
-    ska::flat_hash_map<StrongHash, std::set<int64_t>, StrongHashHashFunction> identical_blocks;
-    identical_blocks.reserve(file_size / block_size + 1);
-    ska::flat_hash_map<int64_t, StrongHash> local_hash_cache;
-    local_hash_cache.reserve(file_size / block_size + 1);
-#else
-    std::unordered_map<WeakHash, std::vector<std::pair<int64_t, const BlockHashes*>>> lookup_table;
-    std::unordered_map<StrongHash, std::set<int64_t>> identical_blocks;
-    std::unordered_map<int64_t, StrongHash> local_hash_cache;
-#endif
-
-
-    RollingChecksum weak;
-    const uint8_t* fp = (const uint8_t*)file_data;
-    int64_t last_progress_report = 0;
-    int64_t bytes_consumed = 0;
+    // Threads will process data in chunks where max chunk size will be 10M-50M.
+    int64_t thread_chunk_size = std::max<int64_t>(
+        std::min<int64_t>(
+            file_size / max_threads,
+            1024 * 1024 * 50),
+        10 * 1024 * 1024);
+    size_t total_thread_count = (size_t)(file_size / thread_chunk_size);
+    if (!thread_chunk_size || !total_thread_count)
     {
-        int64_t block_index = 0;
-        for (auto it = hashes.begin(); it != hashes.end(); it++)
-        {
-            auto& h = *it;
-            lookup_table[h.weak][h.strong] = block_index;
-            identical_blocks[h.strong].insert(block_index);
-            block_index++;
-        }
+        thread_chunk_size = file_size;
+        total_thread_count = 1;
     }
+    else
+        assert((file_size % thread_chunk_size) == 0);
 
-    // Remove lists of identical hashes if list has one entry. In this case block is not identical with any other block.
-    for (auto it = identical_blocks.begin(); it != identical_blocks.end(); it++)
-    {
-        if (it->second.size() > 1)
-            delta.identical_blocks.push_back(std::move(it->second));
-    }
+    for (size_t i = 0; i < total_thread_count; i++)
+        resolver.add_thread(thread_chunk_size * i, thread_chunk_size);
+    resolver.wait();
 
-    auto report_progress_internal = [&]() -> bool
-    {
-        bool continue_ = true;
-        if (report_progress)
-        {
-            int64_t bytes_since_last_report = bytes_consumed - last_progress_report;
-            if (bytes_since_last_report >= (int64_t)block_size)
-            {
-                continue_ = report_progress(bytes_since_last_report, bytes_consumed, file_size);
-                last_progress_report = bytes_consumed;
-            }
-        }
-        return continue_;
-    };
-
-    const uint8_t* w_start = fp - block_size;
-    const auto last_local_hash_check_offset = file_size - block_size;
-    WeakHash last_failed_weak = 0;
-    bool last_failed = false;
-
-    for (;bytes_consumed < file_size;)
-    {
-        if (!report_progress_internal())
-            return DeltaMap();
-
-        size_t current_block_size = (size_t)std::min<int64_t>(block_size, file_size - bytes_consumed);
-        if (weak.isEmpty())
-        {
-            w_start += current_block_size;
-            bytes_consumed += current_block_size;
-            weak.update(w_start, current_block_size);
-        }
-        else
-        {
-            bytes_consumed += 1;
-            weak.rotate(*w_start, w_start[block_size]);
-            ++w_start;
-        }
-
-        WeakHash weak_digest = weak.digest();
-        if (last_failed && last_failed_weak == weak_digest)
-        {
-            // Corner-case optimization. Some data may contain repeating patterns of identical data that is present
-            // in local file but not present in remote file. In such cases lookup_table and StrongHash calculations
-            // would be performed continously for every byte consumed by rolling checksum and would yield no
-            // results. We save last failed weak checksum and when window is moved by one byte and when new rolling
-            // checksum is identical to last one we assume there will be no match and continue rolling in next byte.
-            // This optimization may cause some data blocks to not be reused in rare cases of weak checksum
-            // collisions, however it saves us from some data slowing algorithm to a crawl therefore it is
-            // well-worth trading in few blocks of bandwidth for speed gain. This issue was observed in updating
-            // archlinux-2017.06.01-x86_64.iso -> archlinux-2017.07.01-x86_64.iso
-            continue;
-        }
-
-        auto it = lookup_table.find(weak_digest);
-        if (it != lookup_table.end())
-        {
-            auto strong_hash = StrongHash(w_start, current_block_size);
-            auto jt = it->second.find(strong_hash);
-            if (jt != it->second.end())
-            {
-                if (last_failed)
-                    last_failed = false;
-
-                int64_t this_block_index = jt->second;
-                auto local_offset = w_start - fp;
-                auto block_offset = this_block_index * block_size;
-
-                // In some cases current block may contain identical data with some later blocks. However these
-                // later blocks may already have correct data present. This check avoids moving data between blocks
-                // if they are identical already.
-                if (local_offset != block_offset && block_offset < last_local_hash_check_offset)
-                {
-                    auto lh_it = local_hash_cache.find(block_offset);
-                    bool is_identical = false;
-                    if (lh_it == local_hash_cache.end())
-                    {
-                        StrongHash local_hash(&fp[block_offset], block_size);
-                        local_hash_cache[block_offset] = local_hash;
-                        is_identical = local_hash == strong_hash;
-                    }
-                    else
-                        is_identical = lh_it->second == strong_hash;
-
-                    if (is_identical)
-                    {
-                        // Block at `this_block_index` contains identical data as currently inspected block. No need
-                        // to update that block.
-                        weak.clear();
-                        continue;
-                    }
-                }
-
-                delta.map[this_block_index].local_offset = w_start - fp;
-                weak.clear();
-            }
-            else
-            {
-                last_failed = true;
-                last_failed_weak = weak_digest;
-            }
-        }
-        else
-        {
-            last_failed = true;
-            last_failed_weak = weak_digest;
-        }
-    }
-
-    // Ensure that 100% of progress is reported.
-    if (report_progress)
-    {
-        auto remaining_bytes = bytes_consumed - last_progress_report;
-        if (remaining_bytes > 0)
-            report_progress(remaining_bytes, file_size, file_size);
-    }
-    return delta;
+    return std::move(resolver.delta);
 }
 
 DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
-                               const ProgressCallback& report_progress)
+                               const ProgressCallback& report_progress, size_t max_threads)
 {
     FileMemoryMap mapping;
     auto file_size = get_file_size(file_path);
@@ -366,7 +205,8 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
         // get_differences_delta() call will get null pointer for file data and will return delta for the full download.
         mapping.open(file_path);
     }
-    return get_differences_delta(mapping.get_data(), mapping.get_size(), block_size, hashes, report_progress);
+    return get_differences_delta(mapping.get_data(), mapping.get_size(), block_size, hashes, report_progress,
+                                 max_threads);
 }
 
 bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,

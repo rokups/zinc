@@ -22,7 +22,8 @@ written. Your SSD will be happy.
 * Progress reporting callbacks.
 * c++11 required, though faster with c++14.
 * Python bindings.
-* Example implementation of synchronization tool written in python.
+* Example implementation of synchronization tool written in python and c++.
+* Multithreaded.
 * Free as in freedom - use it however you like, in open source (preferably) or proprietary software, no strings attached.
 
 ### How it works
@@ -49,7 +50,13 @@ On the served end `block_checksums` should be calculated once and written to a f
 transport-agnostic and you may use any transport you desire. Http is named as a suggested transport because it
 eliminates need of any custom server setup and is most convenient option available today.
 
-Other similar software:
+As you can see from diagram above process of synchronizing data is composed of three steps:
+
+1. Hashing: Latest version of the file is split into even blocks and for every block strong and weak hashes are calculated.
+2. Delta calculation: Client obtains the list of block hashes, then calculates a rolling checksum on the local file. Using rolling checksum and list of remote file hashes algorithm determines what file parts need to be kept/copied/downloaded. Local file data will be reused as much as possible.
+3. Patching: Using a calculated delta map blocks in local file are rearranged much like a puzzle pieces, missing pieces are downloaded.
+
+### Other similar software
 * [rsync](https://rsync.samba.org/) - inspiration of zinc
 * [zsync](http://zsync.moria.org.uk/) - inspiration of zinc
 * [xdelta](http://xdelta.org/) - delta updates library

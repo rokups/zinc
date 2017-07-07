@@ -128,7 +128,7 @@ RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size,
  */
 DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
                                const RemoteFileHashList& hashes,
-                               const ProgressCallback& report_progress = ProgressCallback());
+                               const ProgressCallback& report_progress = ProgressCallback(), size_t max_threads=0);
 /*!
  * Calculates a delta map defining which blocks of data are to be reused from local files and which are to be downloaded.
  * \param file_path a path to a file.
@@ -140,7 +140,7 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
  * \throws std::system_error
  */
 DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
-                               const ProgressCallback& report_progress = ProgressCallback());
+                               const ProgressCallback& report_progress = ProgressCallback(), size_t max_threads=0);
 
 /// `file_data` must be at least as big as remote data block.
 /*!

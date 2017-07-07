@@ -60,8 +60,8 @@ PYBIND11_PLUGIN(pyzinc)
 
     m.def("get_block_checksums", (RemoteFileHashList(*)(const void*, int64_t, size_t, const ProgressCallback&))&get_block_checksums, "");
     m.def("get_block_checksums", (RemoteFileHashList(*)(const char*, size_t, const ProgressCallback&))&get_block_checksums, "");
-    m.def("get_differences_delta", (DeltaMap(*)(const void*, int64_t, size_t, const RemoteFileHashList&, const ProgressCallback&))&get_differences_delta, "");
-    m.def("get_differences_delta", (DeltaMap(*)(const char*, size_t, const RemoteFileHashList&, const ProgressCallback&))&get_differences_delta, "");
+    m.def("get_differences_delta", (DeltaMap(*)(const void*, int64_t, size_t, const RemoteFileHashList&, const ProgressCallback&, size_t))&get_differences_delta, "");
+    m.def("get_differences_delta", (DeltaMap(*)(const char*, size_t, const RemoteFileHashList&, const ProgressCallback&, size_t))&get_differences_delta, "");
     m.def("patch_file", (bool(*)(void*, int64_t, size_t, DeltaMap&, const FetchBlockCallback&, const ProgressCallback&))&patch_file, "");
     m.def("patch_file", (bool(*)(const char*, int64_t, size_t, DeltaMap&, const FetchBlockCallback&, const ProgressCallback&))&patch_file, "");
 
