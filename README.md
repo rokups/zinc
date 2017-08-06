@@ -1,7 +1,7 @@
 zinc - the reverse-rsync
 ==========================
 
-Disclaimer: **this library has nothing to do with rsync** other than idea.
+[![Build Status](https://travis-ci.org/rokups/zinc.svg?branch=master)](https://travis-ci.org/rokups/zinc)
 
 **WARNING:** This code is very immature, likely buggy and a subject to change. It would be great if it saw some testing
 from people other than me, however if you use it for anything serious and it breaks - you get to keep both pieces.
