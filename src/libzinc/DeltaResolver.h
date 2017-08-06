@@ -53,7 +53,7 @@ protected:
     std::unordered_map<StrongHash, std::set<int64_t>> identical_blocks;
 #endif
     int64_t last_progress_report = 0;
-    std::atomic_int64_t bytes_consumed_total;
+    std::atomic<int64_t> bytes_consumed_total;
     std::mutex lock;
     size_t concurrent_threads;
 public:

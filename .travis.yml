@@ -1,0 +1,29 @@
+language:
+  - cpp
+os:
+  - linux
+dist:
+  - trusty
+matrix:
+  include:
+    - os: linux
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+          packages:
+            - g++-6
+      env:
+        - MATRIX_EVAL="CC=gcc-6 && CXX=g++-6"
+before_install:
+    - eval "${MATRIX_EVAL}"
+script:
+  - wget https://cmake.org/files/v3.9/cmake-3.9.0-Linux-x86_64.tar.gz 2>&1 >/dev/null
+  - tar zxvf cmake-3.9.0-Linux-x86_64.tar.gz 2>&1 >/dev/null
+  - rm cmake-3.9.0-Linux-x86_64.tar.gz
+  - export PATH=`pwd`/cmake-3.9.0-Linux-x86_64/bin:$PATH
+  - mkdir build
+  - cd build
+  - cmake ..
+  - cmake --build .
+  - ctest
