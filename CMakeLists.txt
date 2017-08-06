@@ -44,6 +44,8 @@ else ()
 endif ()
 option(ZINC_WITH_EXCEPTIONS "Enable exceptions" ON)
 option(ZINC_WITH_LOGGING "Enable verbose logging" ${IS_DEBUG})
+option(ZINC_WITH_PYTHON "Enable python bindings" ON)
+option(ZINC_WITH_ADDRESS_SANITIZER "Enable address sanitizer in debug builds" ON)
 
 add_subdirectory(external)
 add_subdirectory(src)

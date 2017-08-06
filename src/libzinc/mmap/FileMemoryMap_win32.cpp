@@ -25,6 +25,8 @@
 #include "zinc_error.hpp"
 #include <windows.h>
 
+namespace zinc
+{
 
 bool FileMemoryMap::open(const char* file_path)
 {
@@ -77,4 +79,6 @@ void FileMemoryMap::close()
         CloseHandle(_fd);
         _fd = INVALID_HANDLE_VALUE;
     }
+}
+
 }

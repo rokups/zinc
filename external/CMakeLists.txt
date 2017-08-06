@@ -22,7 +22,9 @@
 # SOFTWARE.
 #
 
-add_subdirectory(pybind11)
+if (ZINC_WITH_PYTHON)
+    add_subdirectory(pybind11)
+endif ()
 
 add_library(flat_hash_map INTERFACE)
 target_include_directories(flat_hash_map INTERFACE flat_hash_map)

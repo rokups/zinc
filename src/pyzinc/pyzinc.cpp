@@ -21,6 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+#include <cmath>
 #include <zinc/zinc.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>

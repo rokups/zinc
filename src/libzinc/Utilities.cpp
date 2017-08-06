@@ -24,6 +24,9 @@
 #include "Utilities.hpp"
 #include "zinc_error.hpp"
 #include <sys/stat.h>
+#if _WIN32
+#   include <windows.h>
+#endif
 
 
 namespace zinc

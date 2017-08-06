@@ -178,11 +178,9 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
         thread_chunk_size = file_size;
         total_thread_count = 1;
     }
-    else
-        assert((file_size % thread_chunk_size) == 0);
 
     for (size_t i = 0; i < total_thread_count; i++)
-        resolver.add_thread(thread_chunk_size * i, thread_chunk_size);
+        resolver.add_thread(thread_chunk_size * i, std::min<size_t>(thread_chunk_size, file_size - (thread_chunk_size * i)));
     resolver.wait();
 
     return std::move(resolver.delta);
