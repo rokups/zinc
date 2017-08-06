@@ -46,11 +46,8 @@ struct ByteArrayRef
     ByteArray data;
 };
 
-const size_t RR_NO_MATCH = (const size_t)-1;
-
 DeltaElement::DeltaElement(size_t block_index, size_t block_offset)
     : block_index(block_index)
-    , local_offset(-1)
     , block_offset(block_offset)
 {
 }
@@ -86,9 +83,9 @@ RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size,
                                        const ProgressCallback& report_progress)
 {
     RemoteFileHashList hashes;
-    uint8_t* fp = (uint8_t*)file_data;
+    auto* fp = (uint8_t*)file_data;
 
-    if (!file_data || !file_size || !block_size)
+    if (file_data == nullptr || file_size == 0 || block_size == 0)
     {
         zinc_error<std::invalid_argument>("file_data, file_size and block_size must be positive numbers.");
         return hashes;
@@ -100,7 +97,7 @@ RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size,
     // Last block may be smaller. We will pad it with zeros. In that case we process one less block here and do special
     // treatment of last block after this loop.
     auto last_block_size = file_size % block_size;
-    if (last_block_size)
+    if (last_block_size != 0)
         number_of_blocks -= 1;
 
     for (size_t block_index = 0; block_index < number_of_blocks; ++block_index)
@@ -120,7 +117,7 @@ RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size,
         }
     }
 
-    if (last_block_size)
+    if (last_block_size != 0)
     {
         BlockHashes h;
         std::vector<uint8_t> block_data;
@@ -152,7 +149,7 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
     if (max_threads < 1)
         max_threads = std::thread::hardware_concurrency();
 
-    if (file_size % block_size)
+    if ((file_size % block_size) != 0)
     {
         zinc_error<std::invalid_argument>("file_size must be multiple of block_size.");
         return DeltaMap();
@@ -160,7 +157,7 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
 
     DeltaResolver resolver(file_data, file_size, block_size, hashes, report_progress, max_threads);
 
-    if (!file_data)
+    if (file_data == nullptr)
     {
         zinc_log("File is not present, delta equals to full download.");
         return resolver.delta;
@@ -172,15 +169,15 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
             file_size / max_threads,
             1024 * 1024 * 50),
         10 * 1024 * 1024);
-    size_t total_thread_count = (size_t)(file_size / thread_chunk_size);
-    if (!thread_chunk_size || !total_thread_count)
+    auto total_thread_count = (size_t)(file_size / thread_chunk_size);
+    if (thread_chunk_size == 0 || total_thread_count == 0)
     {
         thread_chunk_size = file_size;
         total_thread_count = 1;
     }
 
     for (size_t i = 0; i < total_thread_count; i++)
-        resolver.add_thread(thread_chunk_size * i, std::min<size_t>(thread_chunk_size, file_size - (thread_chunk_size * i)));
+        resolver.add_thread(thread_chunk_size * i, std::min<int64_t>(thread_chunk_size, file_size - (thread_chunk_size * i)));
     resolver.wait();
 
     return std::move(resolver.delta);
@@ -210,7 +207,7 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
 bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
                 const FetchBlockCallback& get_data, const ProgressCallback& report_progress)
 {
-    if (file_size % block_size)
+    if ((file_size % block_size) != 0)
     {
         zinc_error<std::invalid_argument>("File data must be multiple of a block size.");
         return false;
@@ -226,16 +223,15 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
     std::vector<std::vector<DeltaElement>> ref_cache((unsigned int)(file_size / block_size));
     {
         size_t block_index = 0;
-        for (auto it = delta.map.begin(); it != delta.map.end(); it++)
+        for (auto& delta_element : delta.map)
         {
-            auto& delta_element = *it;
             // Only keep record of elements that require data from other parts of the file. Anything else is irrelevant.
             if (delta_element.is_copy())
                 ref_cache[delta_element.local_offset / block_size].push_back(delta_element);
             block_index++;
         }
     }
-    uint8_t* fp = (uint8_t*)file_data;
+    auto* fp = (uint8_t*)file_data;
     // Block cache is a temporary storage for blocks that will be required elsewhere in the file but are about to be
     // overwritten.
 #if ZINC_USE_SKA_FLAT_HASH_MAP
@@ -284,8 +280,8 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
     std::unordered_map<int64_t, DeltaElement> completed;
     while (!delta.is_empty())
     {
-        DeltaElement* de = 0;
-        bool priority_block = priority_index.size() > 0;
+        DeltaElement* de = nullptr;
+        bool priority_block = !priority_index.empty();
         if (priority_block)
         {
             // Handle blocks which have data cached first so cache can be cleared up.
@@ -368,7 +364,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                 auto identical_siblings = find_identical_siblings(de->block_index);
 
                 bool data_copied = false;
-                if (identical_siblings.size() > 0)
+                if (!identical_siblings.empty())
                 {
                     for (auto identical_index: identical_siblings)
                     {
@@ -430,7 +426,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
         }
         else
         {
-            completed[de->block_index] = std::move(*de);
+            completed[de->block_index] = *de;
             delta.map.pop_back();
         }
 

@@ -102,7 +102,7 @@ struct DeltaMap
  * \throws std::system_error
  */
 RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size, size_t block_size,
-                                       const ProgressCallback& report_progress = ProgressCallback());
+                                       const ProgressCallback& report_progress = nullptr);
 /*!
  * Calculates strong and weak checksums for every block in the passed file.
  * \param file_path a path to a file.
@@ -113,7 +113,7 @@ RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size,
  * \throws std::system_error
  */
 RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size,
-                                       const ProgressCallback& report_progress = ProgressCallback());
+                                       const ProgressCallback& report_progress = nullptr);
 
 /*!
  * Calculates a delta map defining which blocks of data are to be reused from local files and which are to be downloaded.
@@ -128,7 +128,7 @@ RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size,
  */
 DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
                                const RemoteFileHashList& hashes,
-                               const ProgressCallback& report_progress = ProgressCallback(), size_t max_threads=0);
+                               const ProgressCallback& report_progress = nullptr, size_t max_threads=0);
 /*!
  * Calculates a delta map defining which blocks of data are to be reused from local files and which are to be downloaded.
  * \param file_path a path to a file.
@@ -140,7 +140,7 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
  * \throws std::system_error
  */
 DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
-                               const ProgressCallback& report_progress = ProgressCallback(), size_t max_threads=0);
+                               const ProgressCallback& report_progress = nullptr, size_t max_threads=0);
 
 /// `file_data` must be at least as big as remote data block.
 /*!
@@ -157,7 +157,7 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
  * \throws std::system_error
  */
 bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
-                const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());
+                const FetchBlockCallback& get_data, const ProgressCallback& report_progress = nullptr);
 /*!
  * Sync a local file to remote one.
  * \param file_path a path to a file.

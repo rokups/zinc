@@ -51,7 +51,7 @@ T random(T min, T max)
 ByteArray get_random_array(int64_t length)
 {
     ByteArray result;
-    result.resize(length);
+    result.resize(static_cast<unsigned long>(length));
     for (auto i = 0; i < length; i++)
         result[i] = random<uint8_t>(' ', '~');
     return result;
@@ -60,10 +60,10 @@ ByteArray get_random_array(int64_t length)
 ByteArray mix_array(const ByteArray& source, int amount)
 {
     ByteArray result = source;
-    while (amount--)
+    while ((amount--) != 0)
     {
-        size_t offset_start = random<size_t>(0, source.size() - 1);
-        size_t move_len = random<size_t>(1, (source.size() - offset_start));
+        auto offset_start = random<size_t>(0, source.size() - 1);
+        auto move_len = random<size_t>(1, (source.size() - offset_start));
         int move_delta = random(-(int)offset_start, (int)(source.size() - offset_start - move_len));
         memmove(&result.front() + offset_start + move_delta, &result.front() + offset_start, move_len);
     }
@@ -79,30 +79,30 @@ int main()
         fprintf(stderr, "----------------------------------------\n");
         int64_t local_data_size = random<size_t>(10, 50);
         int64_t remote_data_size = std::max<int64_t>(local_data_size + random(-20, 20), 2);
-        size_t block_size = random<size_t>(5, 10);
+        auto block_size = random<size_t>(5, 10);
         ByteArray local_data = get_random_array(local_data_size);
         ByteArray local_data_copy = local_data;
         ByteArray remote_data = local_data;
-        remote_data.resize(remote_data_size);
+        remote_data.resize(static_cast<unsigned long>(remote_data_size));
         remote_data = mix_array(remote_data, random(1, 5));
 
         auto hash_list = zinc::get_block_checksums(&remote_data.front(), remote_data_size, block_size);
 
         // Memory block must be multiple of block_size when calling get_differences_delta()
-        local_data.resize(round_up_to_multiple(local_data_size, block_size));
+        local_data.resize(static_cast<unsigned long>(round_up_to_multiple(local_data_size, block_size)));
         auto delta = zinc::get_differences_delta(&local_data.front(), local_data.size(), block_size, hash_list);
 
         // Memory block must be multiple of block_size and big enough to accomodate new data.
-        local_data.resize(round_up_to_multiple(std::max(local_data.size(), remote_data.size()), block_size));
-        zinc::patch_file(&local_data.front(), local_data.size(), block_size, delta, [&](size_t block_index, size_t block_size) {
+        local_data.resize(static_cast<unsigned long>(round_up_to_multiple(std::max(local_data.size(), remote_data.size()), block_size)));
+        zinc::patch_file(&local_data.front(), local_data.size(), block_size, delta, [&](size_t block_index, size_t block_size_) {
             ByteArray result;
-            auto offset = block_index * block_size;
-            auto current_block_size = std::min(remote_data_size - offset, block_size);
+            auto offset = block_index * block_size_;
+            auto current_block_size = std::min(remote_data_size - offset, block_size_);
             result.resize(current_block_size);
             memcpy(&result.front(), &remote_data.front() + offset, current_block_size);
             return result;
         });
-        local_data.resize(remote_data_size);
+        local_data.resize(static_cast<unsigned long>(remote_data_size));
         if (local_data != remote_data)
         {
             local_data_copy.push_back(0);

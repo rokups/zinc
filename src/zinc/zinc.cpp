@@ -79,7 +79,7 @@ size_t suggest_block_size(int64_t file_size)
 void hex_to_bytes(const std::string& input, uint8_t* output)
 {
     for (auto i = 0; i < input.length() / 2; i++)
-        output[i] = (uint8_t)strtol(input.substr(i * 2, 2).c_str(), nullptr, 16);
+        output[i] = (uint8_t)strtol(input.substr(static_cast<unsigned long>(i * 2), 2).c_str(), nullptr, 16);
 }
 
 int main(int argc, char* argv[])
