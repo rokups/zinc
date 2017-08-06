@@ -46,14 +46,12 @@ DeltaResolver::DeltaResolver(
 
     delta.map.reserve(hashes.size());
     for (size_t block_index = 0; block_index < hashes.size(); block_index++)
-        delta.map.push_back(DeltaElement(block_index, block_index * block_size));
+        delta.map.emplace_back(DeltaElement(block_index, block_index * block_size));
 
-    RollingChecksum weak;
     {
         int64_t block_index = 0;
-        for (auto it = hashes.begin(); it != hashes.end(); it++)
+        for (const auto& h : hashes)
         {
-            auto& h = *it;
             lookup_table[h.weak][h.strong] = block_index;
             identical_blocks[h.strong].insert(block_index);
             block_index++;
@@ -61,16 +59,16 @@ DeltaResolver::DeltaResolver(
     }
 
     // Remove lists of identical hashes if list has one entry. In this case block is not identical with any other block.
-    for (auto it = identical_blocks.begin(); it != identical_blocks.end(); it++)
+    for (auto& identical_block : identical_blocks)
     {
-        if (it->second.size() > 1)
-            delta.identical_blocks.push_back(std::move(it->second));
+        if (identical_block.second.size() > 1)
+            delta.identical_blocks.push_back(std::move(identical_block.second));
     }
 }
 
 void DeltaResolver::add_thread(int64_t start, int64_t length)
 {
-    thread_extents.push_back({start, length});
+    thread_extents.emplace_back(start, length);
 }
 
 void DeltaResolver::wait()
@@ -79,19 +77,19 @@ void DeltaResolver::wait()
     for (; !done;)
     {
         lock.lock();
-        while (active_threads.size() < concurrent_threads && thread_extents.size())
+        while (active_threads.size() < concurrent_threads && !thread_extents.empty())
         {
-            active_threads.push_back(std::thread(std::bind(&DeltaResolver::resolve_concurrent, this,
-                                                           thread_extents.back().first,
-                                                           thread_extents.back().second)));
+            active_threads.emplace_back(std::bind(&DeltaResolver::resolve_concurrent, this,
+                                                  thread_extents.back().first,
+                                                  thread_extents.back().second));
             thread_extents.pop_back();
         }
-        done = active_threads.size() < 1;
+        done = active_threads.empty();
         lock.unlock();
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         auto bytes_total = bytes_consumed_total.load();
         auto bytes_done_now = bytes_total - last_progress_report;
-        if (bytes_done_now)
+        if (bytes_done_now != 0)
         {
             report_progress(bytes_done_now, bytes_total, file_size);
             last_progress_report = bytes_total;
