@@ -28,15 +28,16 @@
 namespace zinc
 {
 
-DeltaResolver::DeltaResolver(
-    const void* file_data, int64_t file_size, size_t block_size, const RemoteFileHashList& hashes,
-    const ProgressCallback& report_progress, size_t concurrent_threads)
+DeltaResolver::DeltaResolver(const void* file_data, int64_t file_size, size_t block_size,
+                             const RemoteFileHashList& hashes, const ProgressCallback& report_progress,
+                             size_t concurrent_threads)
     : hashes(hashes)
-      , report_progress(report_progress)
-      , file_data((uint8_t*)file_data)
-      , file_size(file_size)
-      , block_size(block_size)
-      , concurrent_threads(concurrent_threads)
+    , report_progress(report_progress)
+    , file_data((uint8_t*)file_data)
+    , file_size(file_size)
+    , block_size(block_size)
+    , concurrent_threads(concurrent_threads)
+    , pool(concurrent_threads)
 {
     bytes_consumed_total = 0;
 #if ZINC_USE_SKA_FLAT_HASH_MAP
@@ -66,32 +67,41 @@ DeltaResolver::DeltaResolver(
     }
 }
 
-void DeltaResolver::add_thread(int64_t start, int64_t length)
+void DeltaResolver::start(int64_t thread_chunk_size)
 {
-    thread_extents.emplace_back(start, length);
+    auto total_thread_count = thread_chunk_size ? (size_t)(file_size / thread_chunk_size) : 0;
+    if (thread_chunk_size == 0 || total_thread_count == 0)
+    {
+        thread_chunk_size = file_size;
+        total_thread_count = 1;
+    }
+
+    for (size_t i = 0; i < total_thread_count; i++)
+    {
+        auto start = thread_chunk_size * i;
+        auto length = std::min<int64_t>(thread_chunk_size, file_size - (thread_chunk_size * i));
+        pending_tasks.push_back(pool.enqueue(&DeltaResolver::resolve_concurrent, this, start, length));
+    }
+}
+
+int64_t DeltaResolver::bytes_done() const
+{
+    return bytes_consumed_total.load();
 }
 
 void DeltaResolver::wait()
 {
-    bool done = false;
-    for (; !done;)
+    for (; pending_tasks.size();)
     {
-        lock.lock();
-        while (active_threads.size() < concurrent_threads && !thread_extents.empty())
-        {
-            active_threads.emplace_back(std::bind(&DeltaResolver::resolve_concurrent, this,
-                                                  thread_extents.back().first,
-                                                  thread_extents.back().second));
-            thread_extents.pop_back();
-        }
-        done = active_threads.empty();
-        lock.unlock();
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        if (pending_tasks.back().wait_for(std::chrono::milliseconds(30)) == std::future_status::ready)
+            pending_tasks.pop_back();
+
         auto bytes_total = bytes_consumed_total.load();
         auto bytes_done_now = bytes_total - last_progress_report;
-        if (report_progress && bytes_done_now != 0)
+        if (bytes_done_now != 0)
         {
-            report_progress(bytes_done_now, bytes_total, file_size);
+            if (report_progress)
+                report_progress(bytes_done_now, bytes_total, file_size);
             last_progress_report = bytes_total;
         }
     }
@@ -159,7 +169,7 @@ void DeltaResolver::resolve_concurrent(int64_t start_index, int64_t block_length
         {
             // Corner-case optimization. Some data may contain repeating patterns of identical data that is present
             // in local file but not present in remote file. In such cases lookup_table and StrongHash calculations
-            // would be performed continously for every byte consumed by rolling checksum and would yield no
+            // would be performed continuously for every byte consumed by rolling checksum and would yield no
             // results. We save last failed weak checksum and when window is moved by one byte and when new rolling
             // checksum is identical to last one we assume there will be no match and continue rolling in next byte.
             // This optimization may cause some data blocks to not be reused in rare cases of weak checksum
@@ -226,17 +236,6 @@ void DeltaResolver::resolve_concurrent(int64_t start_index, int64_t block_length
 
     // Ensure all bytes are reported.
     bytes_consumed_total += bytes_consumed - bytes_consumed_last_report;
-
-    lock.lock();
-    for (auto it = active_threads.begin(); it != active_threads.end(); it++)
-    {
-        if ((*it).get_id() == std::this_thread::get_id())
-        {
-            (*it).detach();
-            active_threads.erase(it);
-            break;
-        }
-    }
-    lock.unlock();
 }
+
 }

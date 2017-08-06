@@ -60,7 +60,7 @@ endif ()
 if (ZINC_WITH_EXCEPTIONS)
     target_compile_definitions(libzinc PUBLIC -DZINC_WITH_EXCEPTIONS=1)
 endif ()
-target_link_libraries(libzinc flat_hash_map pthread)
+target_link_libraries(libzinc flat_hash_map Threadpool pthread)
 
 message("ZINC_WITH_LOGGING:           ${ZINC_WITH_LOGGING}")
 message("ZINC_WITH_ADDRESS_SANITIZER: ${ZINC_WITH_ADDRESS_SANITIZER}")

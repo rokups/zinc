@@ -156,28 +156,12 @@ DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t 
     }
 
     DeltaResolver resolver(file_data, file_size, block_size, hashes, report_progress, max_threads);
-
     if (file_data == nullptr)
     {
         zinc_log("File is not present, delta equals to full download.");
         return resolver.delta;
     }
-
-    // Threads will process data in chunks where max chunk size will be 10M-50M.
-    int64_t thread_chunk_size = std::max<int64_t>(
-        std::min<int64_t>(
-            file_size / max_threads,
-            1024 * 1024 * 50),
-        10 * 1024 * 1024);
-    auto total_thread_count = (size_t)(file_size / thread_chunk_size);
-    if (thread_chunk_size == 0 || total_thread_count == 0)
-    {
-        thread_chunk_size = file_size;
-        total_thread_count = 1;
-    }
-
-    for (size_t i = 0; i < total_thread_count; i++)
-        resolver.add_thread(thread_chunk_size * i, std::min<int64_t>(thread_chunk_size, file_size - (thread_chunk_size * i)));
+    resolver.start();
     resolver.wait();
 
     return std::move(resolver.delta);

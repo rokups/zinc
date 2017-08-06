@@ -27,9 +27,9 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <ThreadPool.h>
 #include "zinc/zinc.h"
 #include "hashmaps.h"
-
 
 namespace zinc
 {
@@ -42,6 +42,8 @@ protected:
     const uint8_t* file_data = 0;
     int64_t file_size = 0;
     size_t block_size = 0;
+    ThreadPool pool;
+    std::vector<std::future<void>> pending_tasks;
 
 #if ZINC_USE_SKA_FLAT_HASH_MAP
     ska::flat_hash_map<WeakHash, ska::flat_hash_map<StrongHash, int64_t, StrongHashHashFunction>> lookup_table;
@@ -51,19 +53,21 @@ protected:
     std::unordered_map<StrongHash, std::set<int64_t>> identical_blocks;
 #endif
     int64_t last_progress_report = 0;
-    std::atomic<int64_t> bytes_consumed_total;
+    std::atomic_int64_t bytes_consumed_total;
     std::mutex lock;
-    std::vector<std::pair<int64_t, int64_t>> thread_extents;
     size_t concurrent_threads;
-    std::vector<std::thread> active_threads;
 public:
     DeltaMap delta;
 
     DeltaResolver(const void* file_data, int64_t file_size, size_t block_size, const RemoteFileHashList& hashes,
                   const ProgressCallback& report_progress, size_t concurrent_threads);
 
-    /// Adds a range of bytes to be processed by dedicated thread. This does not start any threads just yet.
-    void add_thread(int64_t start, int64_t length);
+    /// Start delta resolving in parallel. Method returns immediately. `thread_chunk_size` specifies how much data one
+    /// thread should process. No more than `concurrent_threads` number of threads specified in constructor will run at
+    /// a time.
+    void start(int64_t thread_chunk_size=10 * 1024 * 1024);
+    /// Return number of bytes already processed.
+    int64_t bytes_done() const;
     /// Waits for delta resolver to finish all work. Starts threads as needed and reports progress.
     void wait();
 
