@@ -89,7 +89,7 @@ void DeltaResolver::wait()
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         auto bytes_total = bytes_consumed_total.load();
         auto bytes_done_now = bytes_total - last_progress_report;
-        if (bytes_done_now != 0)
+        if (report_progress && bytes_done_now != 0)
         {
             report_progress(bytes_done_now, bytes_total, file_size);
             last_progress_report = bytes_total;
