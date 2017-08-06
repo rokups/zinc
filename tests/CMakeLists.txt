@@ -21,22 +21,17 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-find_package(Boost QUIET COMPONENTS unit_test_framework)
-if (Boost_FOUND)
-    include_directories (${Boost_INCLUDE_DIRS})
-    file(GLOB TEST_SRCS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} test_*.cpp)
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests)
-    foreach (test_source_file ${TEST_SRCS})
-        get_filename_component (test_name ${test_source_file} NAME_WE)
-        add_executable (${test_name} ${test_source_file} common.h common.cpp)
-        target_link_libraries (${test_name} -lasan libzinc ${Boost_LIBRARIES} -lstdc++ -lgcov)
-        target_compile_options(${test_name} PRIVATE -fsanitize=address -g -O0 -fprofile-arcs -ftest-coverage)
-        add_test(
-            NAME ${test_name}
-            COMMAND ${test_name}
-        )
-    endforeach (test_source_file)
-endif ()
+file(GLOB TEST_SRCS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} test_*.cpp)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests)
+foreach (test_source_file ${TEST_SRCS})
+    get_filename_component (test_name ${test_source_file} NAME_WE)
+    add_executable (${test_name} ${test_source_file} common.h common.cpp)
+    target_link_libraries (${test_name} libzinc Catch -lstdc++)
+    add_test(
+        NAME ${test_name}
+        COMMAND ${test_name}
+    )
+endforeach (test_source_file)
 
 if (ZINC_WITH_COVERAGE)
     set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/CMake)

@@ -21,32 +21,29 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#define BOOST_TEST_MODULE "TestRollingChecksum"
-
-
 #include <fstream>
 #include "common.h"
 #include "RollingChecksum.hpp"
 
 
-BOOST_AUTO_TEST_CASE (ChunkChecksum)
+TEST_CASE ("ChunkChecksum")
 {
     char data[] = "abcdefghijklmnopqrstuvwxyz0123456789";
     zinc::RollingChecksum sum(data, strlen(data));
     auto result = sum.digest();
-    BOOST_CHECK(result == 0x0A970D2C);
+    REQUIRE(result == 0x0A970D2C);
 }
 
-BOOST_AUTO_TEST_CASE (ByteRolling)
+TEST_CASE ("ByteRolling")
 {
     char data1[] = "abcdefghijklmnopqrstuvwxyz012345678";
     char data2[] = "bcdefghijklmnopqrstuvwxyz0123456789";
     zinc::RollingChecksum sum(data1, strlen(data1));
     sum.rotate('a', '9');
-    BOOST_CHECK(zinc::RollingChecksum(data2, strlen(data2)).digest() == sum.digest());
+    REQUIRE(zinc::RollingChecksum(data2, strlen(data2)).digest() == sum.digest());
 }
 
-BOOST_AUTO_TEST_CASE (RollingInAllBytes)
+TEST_CASE ("RollingInAllBytes")
 {
     char data[] = "abcdefghijklmnopqrstuvwxyz0123456789";
     auto expect_digest = zinc::RollingChecksum(data, strlen(data)).digest();
@@ -57,5 +54,5 @@ BOOST_AUTO_TEST_CASE (RollingInAllBytes)
 
     auto rotated_digest = sum.digest();
 
-    BOOST_CHECK(expect_digest == rotated_digest);
+    REQUIRE(expect_digest == rotated_digest);
 }

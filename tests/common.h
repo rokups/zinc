@@ -21,8 +21,8 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#define BOOST_TEST_DYN_LINK
-#include <boost/test/unit_test.hpp>
+#define CATCH_CONFIG_MAIN
+#include "catch.hpp"
 #include <zinc/zinc.h>
 #include <cstdlib>
 
