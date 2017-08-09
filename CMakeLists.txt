@@ -37,15 +37,15 @@ endif ()
 
 option (ZINC_WITH_TESTS "Build and run tests" ON)
 
-if (IS_DEBUG AND CMAKE_COMPILER_IS_GNUCXX)
-    option(ZINC_WITH_COVERAGE "Build and run tests" ON)
+if (CMAKE_COMPILER_IS_GNUCXX)
+    option(ZINC_WITH_COVERAGE "Enable gcov coverage testing." ${IS_DEBUG})
 else ()
     set(ZINC_WITH_COVERAGE OFF)
 endif ()
 option(ZINC_WITH_EXCEPTIONS "Enable exceptions" ON)
 option(ZINC_WITH_LOGGING "Enable verbose logging" ${IS_DEBUG})
 option(ZINC_WITH_PYTHON "Enable python bindings" ON)
-option(ZINC_WITH_ADDRESS_SANITIZER "Enable address sanitizer in debug builds" ON)
+option(ZINC_WITH_ADDRESS_SANITIZER "Enable address sanitizer in debug builds" ${IS_DEBUG})
 
 add_subdirectory(external)
 add_subdirectory(src)
