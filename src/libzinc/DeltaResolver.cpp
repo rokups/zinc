@@ -69,7 +69,7 @@ DeltaResolver::DeltaResolver(const void* file_data, int64_t file_size, size_t bl
 
 void DeltaResolver::start(int64_t thread_chunk_size)
 {
-    auto total_thread_count = thread_chunk_size ? (size_t)(file_size / thread_chunk_size) : 0;
+    auto total_thread_count = thread_chunk_size > 0 ? (size_t)(file_size / thread_chunk_size) : 0;
     if (thread_chunk_size == 0 || total_thread_count == 0)
     {
         thread_chunk_size = file_size;
@@ -91,7 +91,7 @@ int64_t DeltaResolver::bytes_done() const
 
 void DeltaResolver::wait()
 {
-    for (; pending_tasks.size();)
+    for (; !pending_tasks.empty(); )
     {
         if (pending_tasks.back().wait_for(std::chrono::milliseconds(30)) == std::future_status::ready)
             pending_tasks.pop_back();
