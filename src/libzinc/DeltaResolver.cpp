@@ -167,15 +167,11 @@ void DeltaResolver::resolve_concurrent(int64_t start_index, int64_t block_length
         WeakHash weak_digest = weak.digest();
         if (last_failed && last_failed_weak == weak_digest)
         {
-            // Corner-case optimization. Some data may contain repeating patterns of identical data that is present
-            // in local file but not present in remote file. In such cases lookup_table and StrongHash calculations
-            // would be performed continuously for every byte consumed by rolling checksum and would yield no
-            // results. We save last failed weak checksum and when window is moved by one byte and when new rolling
-            // checksum is identical to last one we assume there will be no match and continue rolling in next byte.
-            // This optimization may cause some data blocks to not be reused in rare cases of weak checksum
-            // collisions, however it saves us from some data slowing algorithm to a crawl therefore it is
-            // well-worth trading in few blocks of bandwidth for speed gain. This issue was observed in updating
-            // archlinux-2017.06.01-x86_64.iso -> archlinux-2017.07.01-x86_64.iso
+            // Corner-case optimization for repeating data patterns. For example if old file contained a huge blob of
+            // null bytes and new file contains weak hash collision but not not region with same null bytes then
+            // algorithm would continue computing strong hashes shifting one byte at a time and fail to find a match.
+            // We cache value of last failed weak hash if it's strong hash lookup fails. If next weak hash is same as
+            // the last - entire region is skipped. This greatly improves speed in some cases.
             continue;
         }
 

@@ -56,3 +56,13 @@ TEST_CASE ("RollingInAllBytes")
 
     REQUIRE(expect_digest == rotated_digest);
 }
+
+TEST_CASE ("SlidingSameByte")
+{
+    char data1[] = "0001000";
+    zinc::RollingChecksum sum(data1, strlen(data1));
+    auto digest1 = sum.digest();
+    sum.rotate('0', '0');
+    auto digest2 = sum.digest();
+    REQUIRE(digest1 != digest2);
+}
