@@ -109,9 +109,6 @@ void DeltaResolver::wait()
 
 void DeltaResolver::resolve_concurrent(int64_t start_index, int64_t block_length)
 {
-    lock.lock();
-    lock.unlock();
-
     block_length = std::min(file_size - start_index, block_length);                 // Make sure we do not
     // go out of bounds.
 #if ZINC_USE_SKA_FLAT_HASH_MAP

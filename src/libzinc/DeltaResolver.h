@@ -39,7 +39,7 @@ class DeltaResolver
 protected:
     const RemoteFileHashList& hashes;
     const ProgressCallback& report_progress;
-    const uint8_t* file_data = 0;
+    const uint8_t* file_data = nullptr;
     int64_t file_size = 0;
     size_t block_size = 0;
     ThreadPool pool;
@@ -54,7 +54,6 @@ protected:
 #endif
     int64_t last_progress_report = 0;
     std::atomic<int64_t> bytes_consumed_total;
-    std::mutex lock;
     size_t concurrent_threads;
 public:
     DeltaMap delta;
