@@ -23,18 +23,16 @@
  */
 #include "zinc/zinc.h"
 #include <cstring>
+#include <cassert>
 #include <algorithm>
-#include <assert.h>
-#include <climits>
 #include <unordered_map>
-#include <mutex>
 #include "mmap/FileMemoryMap.h"
 #include "crypto/fnv1a.h"
 #include "zinc_error.hpp"
 #include "Utilities.hpp"
-#include "RollingChecksum.hpp"
 #include "DeltaResolver.h"
 #include "hashmaps.h"
+#include "HashBlocksTask.h"
 
 
 namespace zinc
@@ -69,77 +67,28 @@ BlockHashes::BlockHashes(const WeakHash& weak, const std::string& strong)
     this->strong = StrongHash(strong);
 }
 
-
-size_t get_max_blocks(int64_t file_size, size_t block_size)
-{
-    auto number_of_blocks = file_size / block_size;
-    if ((file_size % block_size) != 0)
-        ++number_of_blocks;
-    assert(number_of_blocks < UINT_MAX);
-    return (size_t)number_of_blocks;
-}
-
-RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size, size_t block_size,
-                                       const ProgressCallback& report_progress)
+std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const void* file_data, int64_t file_size,
+                                                               size_t block_size, size_t max_threads)
 {
     RemoteFileHashList hashes;
-    auto* fp = (uint8_t*)file_data;
-
     if (file_data == nullptr || file_size == 0 || block_size == 0)
     {
         zinc_error<std::invalid_argument>("file_data, file_size and block_size must be positive numbers.");
-        return hashes;
+        return std::make_unique<HashBlocksTask>();
     }
-
-    auto number_of_blocks = get_max_blocks(file_size, block_size);
-    hashes.reserve(number_of_blocks);
-
-    // Last block may be smaller. We will pad it with zeros. In that case we process one less block here and do special
-    // treatment of last block after this loop.
-    auto last_block_size = file_size % block_size;
-    if (last_block_size != 0)
-        number_of_blocks -= 1;
-
-    for (size_t block_index = 0; block_index < number_of_blocks; ++block_index)
-    {
-        BlockHashes h;
-        h.weak = RollingChecksum(fp, block_size).digest();
-        h.strong = StrongHash(fp, block_size);
-        hashes.push_back(h);
-        fp += block_size;
-        if (report_progress)
-        {
-            if (!report_progress(block_size, (block_index + 1) * block_size, file_size))
-            {
-                zinc_log("User interrupted get_block_checksums().");
-                return RemoteFileHashList();
-            }
-        }
-    }
-
-    if (last_block_size != 0)
-    {
-        BlockHashes h;
-        std::vector<uint8_t> block_data;
-        block_data.resize(block_size, 0);
-        memcpy(&block_data.front(), fp, (size_t)last_block_size);
-        h.weak = RollingChecksum(&block_data.front(), block_size).digest();
-        h.strong = StrongHash(&block_data.front(), block_size);
-        hashes.push_back(h);
-        if (report_progress)
-            report_progress(last_block_size, file_size, file_size);
-    }
-
-    return hashes;
+    return std::make_unique<HashBlocksTask>(file_data, file_size, block_size, max_threads);
 }
 
-RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size,
-                                       const ProgressCallback& report_progress)
+std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_path, size_t block_size,
+                                                               size_t max_threads)
 {
-    FileMemoryMap mapping;
-    if (mapping.open(file_path))
-        return get_block_checksums(mapping.get_data(), mapping.get_size(), block_size, report_progress);
-    return RemoteFileHashList();
+    RemoteFileHashList hashes;
+    if (file_path == nullptr || block_size == 0)
+    {
+        zinc_error<std::invalid_argument>("file_path and block_size must not be null.");
+        return std::make_unique<HashBlocksTask>();
+    }
+    return std::make_unique<HashBlocksTask>(file_path, block_size, max_threads);
 }
 
 DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,

@@ -28,6 +28,7 @@
 #include <signal.h>
 #include <cstring>
 #include <assert.h>
+#include <thread>
 #include "Utilities.hpp"
 
 
@@ -86,11 +87,12 @@ int main()
         remote_data.resize(static_cast<unsigned long>(remote_data_size));
         remote_data = mix_array(remote_data, random(1, 5));
 
-        auto hash_list = zinc::get_block_checksums(&remote_data.front(), remote_data_size, block_size);
+        auto hashes = zinc::get_block_checksums(&remote_data.front(), remote_data_size, block_size,
+                                                std::thread::hardware_concurrency())->wait()->result();
 
         // Memory block must be multiple of block_size when calling get_differences_delta()
         local_data.resize(static_cast<unsigned long>(round_up_to_multiple(local_data_size, block_size)));
-        auto delta = zinc::get_differences_delta(&local_data.front(), local_data.size(), block_size, hash_list);
+        auto delta = zinc::get_differences_delta(&local_data.front(), local_data.size(), block_size, hashes);
 
         // Memory block must be multiple of block_size and big enough to accomodate new data.
         local_data.resize(static_cast<unsigned long>(round_up_to_multiple(std::max(local_data.size(), remote_data.size()), block_size)));

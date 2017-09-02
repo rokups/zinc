@@ -1,4 +1,29 @@
+/**
+ * MIT License
+ *
+ * Copyright (c) 2017 Rokas Kupstys
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 #include <functional>
+#include <thread>
+#include <chrono>
 #include <zinc/zinc.h>
 #include <json.hpp>
 #include <CLI11.hpp>
@@ -6,6 +31,7 @@
 
 using namespace nlohmann;
 using namespace std::placeholders;
+using namespace std::chrono_literals;
 
 class ProgressBar
 {
@@ -123,13 +149,19 @@ int main(int argc, char* argv[])
             auto file_size = zinc::get_file_size(input_file.c_str());
             bar = ProgressBar("Hashing file");
             auto block_size = suggest_block_size(file_size);
-            auto checksums = zinc::get_block_checksums(input_file.c_str(), block_size, progress_report);
+            auto checksums_task = zinc::get_block_checksums(input_file.c_str(), block_size, std::thread::hardware_concurrency());
+
+            do
+            {
+                std::this_thread::sleep_for(150ms);
+                bar.update(checksums_task->progress(), checksums_task->is_done());
+            } while (!checksums_task->is_done());
 
             json output;
             output["file_size"] = file_size;
             output["block_size"] = block_size;
             output["blocks"] = {};
-            for (const auto& h: checksums)
+            for (const auto& h: checksums_task->result())
                 output["blocks"].push_back(json::array({h.weak, h.strong.to_string()}));
 
             if (FILE* fp = fopen(output_file.c_str(), "w+b"))

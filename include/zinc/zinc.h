@@ -28,6 +28,7 @@
 #include <set>
 #include <vector>
 #include <functional>
+#include <memory>
 #include <stdint.h>
 #if !_WIN32
 #    include <unistd.h>
@@ -91,29 +92,48 @@ struct DeltaMap
     bool is_empty() const { return map.empty(); }
 };
 
+template<typename T>
+struct ITask
+{
+    /// Returns progress percent value (0-100).
+    virtual float progress() const = 0;
+    /// Returns `true` if task has finished execution or was cancelled.
+    virtual bool is_done() const = 0;
+    /// Returns result of the task.
+    virtual T& result() = 0;
+    /// Cancel task.
+    virtual void cancel() = 0;
+    /// Returns true if task finished processing data successfully and was not cancelled.
+    virtual bool success() const = 0;
+    /// Block until task succeeds or fails and return.
+    virtual ITask<T>* wait() = 0;
+};
+
 /*!
  * Calculates strong and weak checksums for every block in the passed memory.
  * \param file_data a pointer to a memory block.
  * \param file_size size of \a file_data memory block. It must be multiple of \a block_size.
  * \param block_size size of single block.
- * \param report_progress a callback which will be invoked to report progress.
- * \return array of \a BlockHashes which contains weak and strong checksums of every block in the file.
+ * \param max_threads a max number of threads used for processing.
+ * \return incomplete task which later yields array of \a BlockHashes which contains weak and strong checksums of every
+ * block in the file.
  * \throws std::invalid_argument
  * \throws std::system_error
  */
-RemoteFileHashList get_block_checksums(const void* file_data, int64_t file_size, size_t block_size,
-                                       const ProgressCallback& report_progress = nullptr);
+std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const void* file_data, int64_t file_size,
+                                                               size_t block_size, size_t max_threads);
 /*!
  * Calculates strong and weak checksums for every block in the passed file.
  * \param file_path a path to a file.
  * \param block_size size of single block.
- * \param report_progress a callback which will be invoked to report progress.
- * \return array of \a BlockHashes which contains weak and strong checksums of every block in the file.
+ * \param max_threads a max number of threads used for processing.
+ * \return incomplete task which later yields array of \a BlockHashes which contains weak and strong checksums of every
+ * block in the file.
  * \throws std::invalid_argument
  * \throws std::system_error
  */
-RemoteFileHashList get_block_checksums(const char* file_path, size_t block_size,
-                                       const ProgressCallback& report_progress = nullptr);
+std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_path, size_t block_size,
+                                                               size_t max_threads);
 
 /*!
  * Calculates a delta map defining which blocks of data are to be reused from local files and which are to be downloaded.

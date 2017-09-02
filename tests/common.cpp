@@ -23,6 +23,9 @@
  */
 #include <zinc/zinc.h>
 #include <cstring>
+#include <thread>
+
+
 using namespace std::placeholders;
 using namespace zinc;
 
@@ -55,7 +58,8 @@ bool data_sync_test(const char* remote, const char* local, size_t block_size)
         local_file_size += block_size - remainder;
     data_local.resize(local_file_size, 0);
 
-    auto checksums = get_block_checksums(&data_remote.front(), data_remote.size(), block_size);
+    auto checksums = get_block_checksums(&data_remote.front(), data_remote.size(), block_size,
+                                         std::thread::hardware_concurrency())->wait()->result();
     auto delta = get_differences_delta(&data_local.front(), data_local.size(), block_size, checksums);
     patch_file(&data_local.front(), data_local.size(), block_size, delta, std::bind(get_data, _1, _2, &data_remote));
 

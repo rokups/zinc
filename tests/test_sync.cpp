@@ -103,7 +103,7 @@ TEST_CASE ("SyncFiles")
         return result;
     };
 
-    auto hashes = zinc::get_block_checksums(file_remote, 5);
+    auto hashes = zinc::get_block_checksums(file_remote, 5, 1)->wait()->result();
     REQUIRE(hashes.size() > 0);
     auto delta = zinc::get_differences_delta(file_local, 5, hashes);
     REQUIRE(delta.map.size() > 0);
