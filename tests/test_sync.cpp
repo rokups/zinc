@@ -25,6 +25,7 @@
 
 
 #include <fstream>
+#include <thread>
 #include "common.h"
 #include "Utilities.hpp"
 
@@ -103,9 +104,9 @@ TEST_CASE ("SyncFiles")
         return result;
     };
 
-    auto hashes = zinc::get_block_checksums(file_remote, 5, 1)->wait()->result();
+    auto hashes = zinc::get_block_checksums(file_remote, 5, std::thread::hardware_concurrency())->wait()->result();
     REQUIRE(hashes.size() > 0);
-    auto delta = zinc::get_differences_delta(file_local, 5, hashes);
+    auto delta = zinc::get_differences_delta(file_local, 5, hashes, std::thread::hardware_concurrency())->wait()->result();
     REQUIRE(delta.map.size() > 0);
     REQUIRE(zinc::patch_file(file_local, zinc::get_file_size(file_remote), 5, delta, get_data) == true);
 

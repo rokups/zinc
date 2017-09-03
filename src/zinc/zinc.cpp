@@ -195,7 +195,13 @@ int main(int argc, char* argv[])
             }
 
             bar = ProgressBar("Calculating delta");
-            auto delta = zinc::get_differences_delta(output_file.c_str(), block_size, hashes, progress_report);
+            auto delta_task = zinc::get_differences_delta(output_file.c_str(), block_size, hashes, std::thread::hardware_concurrency());
+            do
+            {
+                std::this_thread::sleep_for(150ms);
+                bar.update(delta_task->progress(), delta_task->is_done());
+            } while (!delta_task->is_done());
+            auto delta = delta_task->result();
 
             FileReader reader(input_file);
             bar = ProgressBar("Patching file    ");

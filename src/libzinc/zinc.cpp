@@ -91,35 +91,27 @@ std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_
     return std::make_unique<HashBlocksTask>(file_path, block_size, max_threads);
 }
 
-DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
-                               const RemoteFileHashList& hashes, const ProgressCallback& report_progress,
-                               size_t max_threads)
+std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
+                                                       const RemoteFileHashList& hashes, size_t max_threads)
 {
-    if (max_threads < 1)
-        max_threads = std::thread::hardware_concurrency();
-
     if ((file_size % block_size) != 0)
     {
         zinc_error<std::invalid_argument>("file_size must be multiple of block_size.");
-        return DeltaMap();
+        return std::make_unique<DeltaResolver>();
     }
 
-    DeltaResolver resolver(file_data, file_size, block_size, hashes, report_progress, max_threads);
     if (file_data == nullptr)
     {
         zinc_log("File is not present, delta equals to full download.");
-        return resolver.delta;
+        return std::make_unique<DeltaResolver>();
     }
-    resolver.start();
-    resolver.wait();
 
-    return std::move(resolver.delta);
+    return std::make_unique<DeltaResolver>(file_data, file_size, block_size, hashes, max_threads);
 }
 
-DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
-                               const ProgressCallback& report_progress, size_t max_threads)
+std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const char* file_path, size_t block_size,
+                                                       const RemoteFileHashList& hashes, size_t max_threads)
 {
-    FileMemoryMap mapping;
     auto file_size = get_file_size(file_path);
     if (file_size > 0)
     {
@@ -127,14 +119,10 @@ DeltaMap get_differences_delta(const char* file_path, size_t block_size, const R
         if (err != 0)
         {
             zinc_error<std::system_error>("Could not truncate file_path to required size.", err);
-            return DeltaMap();
+            return std::make_unique<DeltaResolver>();
         }
-        // We open file mapping only if file exists. If file is missing and mapping is not opened then
-        // get_differences_delta() call will get null pointer for file data and will return delta for the full download.
-        mapping.open(file_path);
     }
-    return get_differences_delta(mapping.get_data(), mapping.get_size(), block_size, hashes, report_progress,
-                                 max_threads);
+    return std::make_unique<DeltaResolver>(file_path, block_size, hashes, max_threads);
 }
 
 bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,

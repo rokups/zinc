@@ -21,6 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+#include <cassert>
 #include "DeltaResolver.h"
 #include "RollingChecksum.hpp"
 
@@ -28,30 +29,62 @@
 namespace zinc
 {
 
-DeltaResolver::DeltaResolver(const void* file_data, int64_t file_size, size_t block_size,
-                             const RemoteFileHashList& hashes, const ProgressCallback& report_progress,
-                             size_t concurrent_threads)
-    : hashes(hashes)
-    , report_progress(report_progress)
-    , file_data((uint8_t*)file_data)
-    , file_size(file_size)
-    , block_size(block_size)
-    , concurrent_threads(concurrent_threads)
-    , pool(concurrent_threads)
+DeltaResolver::DeltaResolver()
+    : Task<DeltaMap>(nullptr, 0, 0)
+    , _hashes(nullptr)
 {
-    bytes_consumed_total = 0;
+}
+
+DeltaResolver::DeltaResolver(const void* file_data, int64_t file_size, size_t block_size,
+                             const RemoteFileHashList& hashes, size_t thread_count)
+    : _hashes(&hashes)
+    , _block_size(block_size)
+    , Task<DeltaMap>(file_data, file_size, thread_count)
+{
+    assert(file_data != nullptr);
+    assert(file_size > 0);
+    assert(block_size > 0);
+    assert(!hashes.empty());
+    assert(thread_count > 0);
+
+    queue_tasks();
+}
+
+DeltaResolver::DeltaResolver(const char* file_name, size_t block_size, const RemoteFileHashList& hashes,
+                             size_t thread_count)
+    : _hashes(&hashes)
+    , _block_size(block_size)
+    , Task<DeltaMap>(nullptr, 0, thread_count)
+{
+    assert(file_name != nullptr);
+    assert(block_size > 0);
+    assert(!hashes.empty());
+    assert(thread_count > 0);
+
+    if (_mapping.open(file_name))
+    {
+        _file_data = static_cast<const uint8_t*>(_mapping.get_data());
+        _bytes_total = _mapping.get_size();
+        queue_tasks();
+    }
+}
+
+void DeltaResolver::queue_tasks()
+{
+    // Initialize helper data
+    _bytes_done = 0;
 #if ZINC_USE_SKA_FLAT_HASH_MAP
-    lookup_table.reserve(hashes.size());
-        identical_blocks.reserve(file_size / block_size + 1);
+    lookup_table.reserve(_hashes->size());
+    identical_blocks.reserve(_bytes_total / _block_size + 1);
 #endif
 
-    delta.map.reserve(hashes.size());
-    for (size_t block_index = 0; block_index < hashes.size(); block_index++)
-        delta.map.emplace_back(DeltaElement(block_index, block_index * block_size));
+    _result.map.reserve(_hashes->size());
+    for (size_t block_index = 0; block_index < _hashes->size(); block_index++)
+        _result.map.emplace_back(DeltaElement(block_index, block_index * _block_size));
 
     {
         int64_t block_index = 0;
-        for (const auto& h : hashes)
+        for (const auto& h : *_hashes)
         {
             lookup_table[h.weak][h.strong] = block_index;
             identical_blocks[h.strong].insert(block_index);
@@ -63,101 +96,72 @@ DeltaResolver::DeltaResolver(const void* file_data, int64_t file_size, size_t bl
     for (auto& identical_block : identical_blocks)
     {
         if (identical_block.second.size() > 1)
-            delta.identical_blocks.push_back(std::move(identical_block.second));
-    }
-}
-
-void DeltaResolver::start(int64_t thread_chunk_size)
-{
-    auto total_thread_count = thread_chunk_size > 0 ? (size_t)(file_size / thread_chunk_size) : 0;
-    if (thread_chunk_size == 0 || total_thread_count == 0)
-    {
-        thread_chunk_size = file_size;
-        total_thread_count = 1;
+            _result.identical_blocks.push_back(std::move(identical_block.second));
     }
 
+    // Queue threads
+    int64_t thread_chunk_size = 10 * 1024 * 1024;
+    auto total_thread_count = _bytes_total / thread_chunk_size + 1;
     for (size_t i = 0; i < total_thread_count; i++)
     {
         auto start = thread_chunk_size * i;
-        auto length = std::min<int64_t>(thread_chunk_size, file_size - (thread_chunk_size * i));
-        pending_tasks.push_back(pool.enqueue(&DeltaResolver::resolve_concurrent, this, start, length));
+        auto length = std::min<int64_t>(thread_chunk_size, _bytes_total - (thread_chunk_size * i));
+        if (length > 0)
+            _pool.enqueue(&DeltaResolver::process, this, start, length);
     }
 }
 
-int64_t DeltaResolver::bytes_done() const
+void DeltaResolver::process(int64_t start_index, int64_t block_length)
 {
-    return bytes_consumed_total.load();
-}
-
-void DeltaResolver::wait()
-{
-    for (; !pending_tasks.empty(); )
-    {
-        if (pending_tasks.back().wait_for(std::chrono::milliseconds(30)) == std::future_status::ready)
-            pending_tasks.pop_back();
-
-        auto bytes_total = bytes_consumed_total.load();
-        auto bytes_done_now = bytes_total - last_progress_report;
-        if (bytes_done_now != 0)
-        {
-            if (report_progress)
-                report_progress(bytes_done_now, bytes_total, file_size);
-            last_progress_report = bytes_total;
-        }
-    }
-}
-
-void DeltaResolver::resolve_concurrent(int64_t start_index, int64_t block_length)
-{
-    block_length = std::min(file_size - start_index, block_length);                 // Make sure we do not
+    block_length = std::min(_bytes_total - start_index, block_length);                 // Make sure we do not
     // go out of bounds.
 #if ZINC_USE_SKA_FLAT_HASH_MAP
     ska::flat_hash_map<int64_t, StrongHash> local_hash_cache;
-        local_hash_cache.reserve(file_size / block_size + 1);
+        local_hash_cache.reserve(_bytes_total / _block_size + 1);
 #else
     std::unordered_map<int64_t, StrongHash> local_hash_cache;
 #endif
 
     // `- block_size` at the end compensates for w_start being increased on the first pass when weak checksum is
     // empty. Checksum is always empty on the first pass.
-    const uint8_t* w_start = file_data + start_index - block_size;
-    if (start_index >= block_size)
+    const uint8_t* w_start = _file_data + start_index - _block_size;
+    if (start_index >= _block_size)
     {
         // `- block_size + 1` adjusts starting pointer so that we start consuming bytes in specified block from the
         // first one. Naturally it must include `block_size - 1` bytes from previous block so that rolling hash is
         // calculated through entire file. Previous block stops after consuming last byte before `start_index`.
-        w_start = w_start - block_size + 1;
+        w_start = w_start - _block_size + 1;
     }
     RollingChecksum weak;
     WeakHash last_failed_weak = 0;
     int64_t bytes_consumed = 0;
-    int64_t bytes_consumed_last_report = 0;
     bool last_failed = false;
-    const auto last_local_hash_check_offset = file_size - block_size;
+    const auto last_local_hash_check_offset = _bytes_total - _block_size;
 
-    for (; bytes_consumed < block_length;)
+    for (; block_length > 0;)
     {
         // Progress reporting.
+        if (bytes_consumed >= _block_size)
         {
-            auto bytes_consumed_diff = bytes_consumed - bytes_consumed_last_report;
-            if (bytes_consumed_diff >= block_size)
-            {
-                bytes_consumed_total += bytes_consumed_diff;
-                bytes_consumed_last_report = bytes_consumed;
-            }
+            _bytes_done += bytes_consumed;
+            bytes_consumed = 0;
+            if (_cancel.load())
+                return;
         }
 
-        size_t current_block_size = (size_t)std::min<int64_t>(block_size, block_length - bytes_consumed);
+        size_t current_block_size = (size_t)std::min<int64_t>(_block_size, block_length);
         if (weak.isEmpty())
         {
             w_start += current_block_size;
             bytes_consumed += current_block_size;
+            block_length -= current_block_size;
             weak.update(w_start, current_block_size);
         }
         else
         {
             bytes_consumed += 1;
-            weak.rotate(*w_start, w_start[block_size]);
+            block_length -= 1;
+            weak.rotate(*w_start, w_start[_block_size]);
             ++w_start;
         }
 
@@ -183,8 +187,8 @@ void DeltaResolver::resolve_concurrent(int64_t start_index, int64_t block_length
                     last_failed = false;
 
                 int64_t this_block_index = jt->second;
-                auto local_offset = w_start - file_data;
-                auto block_offset = this_block_index * block_size;
+                auto local_offset = w_start - _file_data;
+                auto block_offset = this_block_index * _block_size;
 
                 // In some cases current block may contain identical data with some later blocks. However these
                 // later blocks may already have correct data present. This check avoids moving data between blocks
@@ -195,7 +199,7 @@ void DeltaResolver::resolve_concurrent(int64_t start_index, int64_t block_length
                     bool is_identical = false;
                     if (lh_it == local_hash_cache.end())
                     {
-                        StrongHash local_hash(&file_data[block_offset], block_size);
+                        StrongHash local_hash(&_file_data[block_offset], _block_size);
                         local_hash_cache[block_offset] = local_hash;
                         is_identical = local_hash == strong_hash;
                     }
@@ -211,7 +215,7 @@ void DeltaResolver::resolve_concurrent(int64_t start_index, int64_t block_length
                     }
                 }
 
-                delta.map[this_block_index].local_offset = w_start - file_data;
+                _result.map[this_block_index].local_offset = w_start - _file_data;
                 weak.clear();
             }
             else
@@ -228,7 +232,7 @@ void DeltaResolver::resolve_concurrent(int64_t start_index, int64_t block_length
     }
 
     // Ensure all bytes are reported.
-    bytes_consumed_total += bytes_consumed - bytes_consumed_last_report;
+    _bytes_done += bytes_consumed;
 }
 
 }

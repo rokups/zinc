@@ -56,7 +56,7 @@ void zinc::HashBlocksTask::queue_tasks()
     _result.resize(block_count);
 
     auto i = 0;
-    auto blocks_per_thread = std::max<size_t>(block_count / _thread_count, 1);
+    auto blocks_per_thread = std::max<size_t>(block_count / _thread_count + 1, 1);
     for (; block_count >= blocks_per_thread; i++)
     {
         _pool.enqueue(&HashBlocksTask::process, this, i * blocks_per_thread, blocks_per_thread);

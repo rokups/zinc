@@ -60,7 +60,7 @@ bool data_sync_test(const char* remote, const char* local, size_t block_size)
 
     auto checksums = get_block_checksums(&data_remote.front(), data_remote.size(), block_size,
                                          std::thread::hardware_concurrency())->wait()->result();
-    auto delta = get_differences_delta(&data_local.front(), data_local.size(), block_size, checksums);
+    auto delta = get_differences_delta(&data_local.front(), data_local.size(), block_size, checksums, std::thread::hardware_concurrency())->wait()->result();
     patch_file(&data_local.front(), data_local.size(), block_size, delta, std::bind(get_data, _1, _2, &data_remote));
 
     // Ensure local data does not have more bytes than remote data

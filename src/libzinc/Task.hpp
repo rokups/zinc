@@ -32,9 +32,9 @@ namespace zinc
 {
 
 template<typename T>
-struct Task
-    : public ITask<T>
+class Task : public ITask<T>
 {
+protected:
     const uint8_t* _file_data = nullptr;
     int64_t _bytes_total = 0;
     std::atomic<int64_t> _bytes_done;
@@ -43,6 +43,7 @@ struct Task
     ThreadPool _pool;
     T _result;
 
+public:
     Task(const void* file_data, int64_t file_size, size_t thread_count)
         : _file_data(static_cast<const uint8_t*>(file_data))
           , _bytes_total(file_size)
@@ -54,6 +55,8 @@ struct Task
     }
 
     Task(const Task& other) = delete;
+
+    ~Task() override = default;
 
     float progress() const override
     {

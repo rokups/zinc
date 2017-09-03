@@ -92,7 +92,7 @@ int main()
 
         // Memory block must be multiple of block_size when calling get_differences_delta()
         local_data.resize(static_cast<unsigned long>(round_up_to_multiple(local_data_size, block_size)));
-        auto delta = zinc::get_differences_delta(&local_data.front(), local_data.size(), block_size, hashes);
+        auto delta = zinc::get_differences_delta(&local_data.front(), local_data.size(), block_size, hashes, std::thread::hardware_concurrency())->wait()->result();
 
         // Memory block must be multiple of block_size and big enough to accomodate new data.
         local_data.resize(static_cast<unsigned long>(round_up_to_multiple(std::max(local_data.size(), remote_data.size()), block_size)));

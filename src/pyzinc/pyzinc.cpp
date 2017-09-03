@@ -62,6 +62,14 @@ PYBIND11_PLUGIN(pyzinc)
         .def("success", &ITask<RemoteFileHashList>::success)
         .def("wait", &ITask<RemoteFileHashList>::wait);
 
+    py::class_<ITask<DeltaMap>>(m, "ResolveDeltaTask")
+        .def("progress", &ITask<RemoteFileHashList>::progress)
+        .def("is_done", &ITask<RemoteFileHashList>::is_done)
+        .def("result", &ITask<RemoteFileHashList>::result)
+        .def("cancel", &ITask<RemoteFileHashList>::cancel)
+        .def("success", &ITask<RemoteFileHashList>::success)
+        .def("wait", &ITask<RemoteFileHashList>::wait);
+
     py::class_<DeltaMap>(m, "DeltaMap")
         .def_readonly("map", &DeltaMap::map)
         .def_readonly("identical_blocks", &DeltaMap::identical_blocks)
@@ -69,8 +77,8 @@ PYBIND11_PLUGIN(pyzinc)
 
     m.def("get_block_checksums", (std::unique_ptr<ITask<RemoteFileHashList>>(*)(const void*, int64_t, size_t, size_t))&get_block_checksums, "");
     m.def("get_block_checksums", (std::unique_ptr<ITask<RemoteFileHashList>>(*)(const char*, size_t, size_t))&get_block_checksums, "");
-    m.def("get_differences_delta", (DeltaMap(*)(const void*, int64_t, size_t, const RemoteFileHashList&, const ProgressCallback&, size_t))&get_differences_delta, "");
-    m.def("get_differences_delta", (DeltaMap(*)(const char*, size_t, const RemoteFileHashList&, const ProgressCallback&, size_t))&get_differences_delta, "");
+    m.def("get_differences_delta", (std::unique_ptr<ITask<DeltaMap>>(*)(const void*, int64_t, size_t, const RemoteFileHashList&, size_t))&get_differences_delta, "");
+    m.def("get_differences_delta", (std::unique_ptr<ITask<DeltaMap>>(*)(const char*, size_t, const RemoteFileHashList&, size_t))&get_differences_delta, "");
     m.def("patch_file", (bool(*)(void*, int64_t, size_t, DeltaMap&, const FetchBlockCallback&, const ProgressCallback&))&patch_file, "");
     m.def("patch_file", (bool(*)(const char*, int64_t, size_t, DeltaMap&, const FetchBlockCallback&, const ProgressCallback&))&patch_file, "");
 

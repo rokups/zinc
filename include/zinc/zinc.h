@@ -93,8 +93,10 @@ struct DeltaMap
 };
 
 template<typename T>
-struct ITask
+class ITask
 {
+public:
+    virtual ~ITask() = default;
     /// Returns progress percent value (0-100).
     virtual float progress() const = 0;
     /// Returns `true` if task has finished execution or was cancelled.
@@ -141,26 +143,27 @@ std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_
  * \param file_size size of \a file_data memory block. It must be multiple of \a block_size.
  * \param block_size size of single block.
  * \param hashes \a RemoteFileHashList returned by \a get_block_checksums.
- * \param report_progress a callback which will be invoked to report progress.
- * \return \a DeltaMap describing how data should be reused from local file and which blocks should be downloaded.
+ * \param max_threads a max number of threads used for processing.
+ * \return incomplete task which later yields DeltaMap describing how data should be reused from local file and which
+ * blocks should be downloaded.
  * \throws std::invalid_argument
  * \throws std::system_error
  */
-DeltaMap get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
-                               const RemoteFileHashList& hashes,
-                               const ProgressCallback& report_progress = nullptr, size_t max_threads=0);
+std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
+                                                       const RemoteFileHashList& hashes, size_t max_threads);
 /*!
  * Calculates a delta map defining which blocks of data are to be reused from local files and which are to be downloaded.
  * \param file_path a path to a file.
  * \param block_size size of single block.
  * \param hashes \a RemoteFileHashList returned by \a get_block_checksums.
- * \param report_progress a callback which will be invoked to report progress.
- * \return \a DeltaMap describing how data should be reused from local file and which blocks should be downloaded.
+ * \param max_threads a max number of threads used for processing.
+ * \return incomplete task which later yields DeltaMap describing how data should be reused from local file and which
+ * blocks should be downloaded.
  * \throws std::invalid_argument
  * \throws std::system_error
  */
-DeltaMap get_differences_delta(const char* file_path, size_t block_size, const RemoteFileHashList& hashes,
-                               const ProgressCallback& report_progress = nullptr, size_t max_threads=0);
+std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const char* file_path, size_t block_size,
+                                                       const RemoteFileHashList& hashes, size_t max_threads);
 
 /// `file_data` must be at least as big as remote data block.
 /*!
