@@ -56,10 +56,8 @@ protected:
     size_t _block_size = 0;
 #if ZINC_USE_SKA_FLAT_HASH_MAP
     ska::flat_hash_map<WeakHash, ska::flat_hash_map<StrongHash, int64_t, StrongHashHashFunction>> lookup_table;
-    ska::flat_hash_map<StrongHash, std::set<int64_t>, StrongHashHashFunction> identical_blocks;
 #else
     std::unordered_map<WeakHash, std::vector<std::pair<int64_t, const BlockHashes*>>> lookup_table;
-    std::unordered_map<StrongHash, std::set<int64_t>> identical_blocks;
 #endif
 
     /// Queues tasks to threadpool for processing blocks.

@@ -26,12 +26,11 @@
 #include <cassert>
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 #include "mmap/FileMemoryMap.h"
-#include "crypto/fnv1a.h"
 #include "zinc_error.hpp"
 #include "Utilities.hpp"
 #include "DeltaResolver.h"
-#include "hashmaps.h"
 #include "HashBlocksTask.h"
 
 
@@ -186,19 +185,14 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
         priority_index.push_back(cacheable.block_index);
     };
 
-    // TODO: This is inefficient.
-    auto find_identical_siblings = [&](int64_t block_index) -> std::set<int64_t>
+    std::unordered_set<int64_t> completed;
+    // Gather all completed blocks. They will be used when data is reused from the same file.
+    for (DeltaElement& de : delta.map)
     {
-        for (auto index_set: delta.identical_blocks)
-        {
-            auto it = index_set.find(block_index);
-            if (it != index_set.end())
-                return index_set;
-        }
-        return std::set<int64_t>();
-    };
+        if (de.is_done())
+            completed.insert(de.block_index);
+    }
 
-    std::unordered_map<int64_t, DeltaElement> completed;
     while (!delta.is_empty())
     {
         DeltaElement* de = nullptr;
@@ -222,7 +216,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
             de = &delta.map.back();
             if (!de->is_valid())
             {
-                // This block was already handled by prioritizing cached blocks.
+                // This block was already handled.
                 delta.map.pop_back();
                 continue;
             }
@@ -282,32 +276,48 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
 
             if (de->is_download())
             {
-                auto identical_siblings = find_identical_siblings(de->block_index);
-
-                bool data_copied = false;
-                if (!identical_siblings.empty())
+                auto identical_blocks_it = delta.identical_blocks.find(de->block_index);
+                if (identical_blocks_it != delta.identical_blocks.end())
                 {
-                    for (auto identical_index: identical_siblings)
+                    // Find block offset of data already contained in the file.
+                    int64_t source_block_offset = -1;
+                    auto& identical_siblings = identical_blocks_it->second;         // Should this modify in place or
+                                                                                    // make a copy?
+                    for (auto it = identical_siblings.begin(); it != identical_siblings.end();)
                     {
-                        auto completed_it = completed.find(identical_index);
-                        if (completed_it != completed.end())
+                        int64_t identical_index = *it;
+                        if (completed.find(identical_index) != completed.end())
                         {
-                            // Should `completed` be cleaned up here?
-                            zinc_log("% 4d offset use from % 4d", de->block_offset, completed_it->second.block_offset);
-                            memmove(&fp[de->block_offset], &fp[completed_it->second.block_offset], block_size);
-                            data_copied = true;
-                            break;
+                            source_block_offset = identical_index * block_size;
+                            it = identical_siblings.erase(it);
                         }
+                        else
+                            ++it;
+                    }
+                    // If data already exists - fill all missing blocks with it.
+                    if (source_block_offset >= 0)
+                    {
+                        for (int64_t sibling_index : identical_siblings)
+                        {
+                            // Reuse data in identical blocks
+                            int64_t destination_block_offset = sibling_index * block_size;
+                            zinc_log("% 4d offset use from % 4d", destination_block_offset, source_block_offset);
+                            memmove(&fp[destination_block_offset], &fp[source_block_offset], block_size);
+                            // Mark blocks as completed
+                            if (delta.map.size() > destination_block_offset)
+                            {
+                                auto& sibling_de = delta.map[destination_block_offset];
+                                sibling_de.local_offset = sibling_de.block_offset;
+                            }
+                        }
+                        goto finalize_block;
                     }
                 }
 
                 // There were no identical siblings or none of them were downloaded yet.
-                if (!data_copied)
-                {
-                    zinc_log("% 4d offset download", de->block_offset);
-                    auto data = get_data(de->block_index, block_size);
-                    memcpy(&fp[de->block_offset], &data.front(), data.size());
-                }
+                zinc_log("% 4d offset download", de->block_offset);
+                auto data = get_data(de->block_index, block_size);
+                memcpy(&fp[de->block_offset], &data.front(), data.size());
             }
             else
             {
@@ -340,16 +350,12 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
             }
         }
 
+finalize_block:
+        completed.insert(de->block_index);
         if (priority_block)
-        {
-            completed[de->block_index] = *de;
             de->block_index = -1;                // Mark block as invalid so it is not handled twice in this loop.
-        }
         else
-        {
-            completed[de->block_index] = *de;
             delta.map.pop_back();
-        }
 
         if (report_progress)
         {

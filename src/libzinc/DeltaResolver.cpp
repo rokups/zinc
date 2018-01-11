@@ -75,7 +75,10 @@ void DeltaResolver::queue_tasks()
     _bytes_done = 0;
 #if ZINC_USE_SKA_FLAT_HASH_MAP
     lookup_table.reserve(_hashes->size());
+    ska::flat_hash_map<StrongHash, std::set<int64_t>, StrongHashHashFunction> identical_blocks;
     identical_blocks.reserve(_bytes_total / _block_size + 1);
+#else
+    std::unordered_map<StrongHash, std::set<int64_t>> identical_blocks;
 #endif
 
     _result.map.reserve(_hashes->size());
@@ -96,7 +99,10 @@ void DeltaResolver::queue_tasks()
     for (auto& identical_block : identical_blocks)
     {
         if (identical_block.second.size() > 1)
-            _result.identical_blocks.push_back(std::move(identical_block.second));
+        {
+            for (int64_t index : identical_block.second)
+                _result.identical_blocks[index] = identical_block.second;
+        }
     }
 
     // Queue threads

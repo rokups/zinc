@@ -24,12 +24,12 @@
 #pragma once
 
 
-#include <map>
-#include <set>
-#include <vector>
+#include <cstdint>
 #include <functional>
 #include <memory>
-#include <stdint.h>
+#include <set>
+#include <vector>
+#include <unordered_map>
 #if !_WIN32
 #    include <unistd.h>
 #endif
@@ -87,7 +87,7 @@ struct DeltaMap
     /// A list of offsets of currenty present data in not yet updated file. -1 value signifies a missing block.
     std::vector<DeltaElement> map;
     /// Groups of block indexes whose content is identical. Used to avoid downloading same content multiple times.
-    std::vector<std::set<int64_t>> identical_blocks;
+    std::unordered_map<int64_t, std::set<int64_t>> identical_blocks;
     /// Return true if delta map is empty.
     bool is_empty() const { return map.empty(); }
 };
