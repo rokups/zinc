@@ -24,6 +24,6 @@ script:
   - export PATH=`pwd`/cmake-3.9.0-Linux-x86_64/bin:$PATH
   - mkdir build
   - cd build
-  - cmake ..
+  - cmake -DZINC_WITH_PYTHON=OFF ..
   - cmake --build .
   - ctest
