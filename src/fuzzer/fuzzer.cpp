@@ -85,6 +85,11 @@ int main()
         ByteArray local_data_copy = local_data;
         ByteArray remote_data = local_data;
         remote_data.resize(static_cast<unsigned long>(remote_data_size));
+        if (remote_data_size > local_data_size)
+        {
+            ByteArray diff_data = get_random_array(remote_data_size - local_data_size);
+            memcpy(&remote_data[local_data_size], &diff_data.front(), diff_data.size());
+        }
         remote_data = mix_array(remote_data, random(1, 5));
 
         auto hashes = zinc::get_block_checksums(&remote_data.front(), remote_data_size, block_size,
@@ -110,10 +115,10 @@ int main()
             local_data_copy.push_back(0);
             remote_data.push_back(0);
             local_data.push_back(0);
-            printf("Local  data |%s|\n", &local_data_copy.front());
-            printf("Remote data |%s|\n", &remote_data.front());
-            printf("Result data |%s|\n", &local_data.front());
-            printf("Block  size |%d|\n", (int)block_size);
+            printf("Local  data |%s|[%lu]\n", &local_data_copy.front(), local_data_copy.size());
+            printf("Remote data |%s|[%lu]\n", &remote_data.front(), remote_data.size());
+            printf("Result data |%s|[%lu]\n", &local_data.front(), local_data.size());
+            printf("Block  size %d\n", (int)block_size);
             printf("Note: data blocks are surrounded by ||!\n");
             assert(local_data == remote_data);
         }
