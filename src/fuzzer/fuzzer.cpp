@@ -110,10 +110,11 @@ int main()
             local_data_copy.push_back(0);
             remote_data.push_back(0);
             local_data.push_back(0);
-            printf("Local  data: %s\n", &local_data_copy.front());
-            printf("Remote data: %s\n", &remote_data.front());
-            printf("Result data: %s\n", &local_data.front());
-            printf("Block  size: %d\n", (int)block_size);
+            printf("Local  data |%s|\n", &local_data_copy.front());
+            printf("Remote data |%s|\n", &remote_data.front());
+            printf("Result data |%s|\n", &local_data.front());
+            printf("Block  size |%d|\n", (int)block_size);
+            printf("Note: data blocks are surrounded by ||!\n");
             assert(local_data == remote_data);
         }
         usleep(15000);
