@@ -101,7 +101,11 @@ void DeltaResolver::queue_tasks()
         if (identical_block.second.size() > 1)
         {
             for (int64_t index : identical_block.second)
-                _result.identical_blocks[index] = identical_block.second;
+            {
+                std::set<int64_t> identical_blocks_copy(identical_block.second);
+                identical_blocks_copy.erase(index);
+                _result.identical_blocks[index] = std::move(identical_blocks_copy);
+            }
         }
     }
 

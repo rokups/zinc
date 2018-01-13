@@ -185,14 +185,6 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
         priority_index.push_back(cacheable.block_index);
     };
 
-    std::unordered_set<int64_t> completed;
-    // Gather all completed blocks. They will be used when data is reused from the same file.
-    for (DeltaElement& de : delta.map)
-    {
-        if (de.is_done())
-            completed.insert(de.block_index);
-    }
-
     while (!delta.is_empty())
     {
         DeltaElement* de = nullptr;
@@ -276,48 +268,25 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
 
             if (de->is_download())
             {
-                auto identical_blocks_it = delta.identical_blocks.find(de->block_index);
-                if (identical_blocks_it != delta.identical_blocks.end())
-                {
-                    // Find block offset of data already contained in the file.
-                    int64_t source_block_offset = -1;
-                    auto& identical_siblings = identical_blocks_it->second;         // Should this modify in place or
-                                                                                    // make a copy?
-                    for (auto it = identical_siblings.begin(); it != identical_siblings.end();)
-                    {
-                        int64_t identical_index = *it;
-                        if (completed.find(identical_index) != completed.end())
-                        {
-                            source_block_offset = identical_index * block_size;
-                            it = identical_siblings.erase(it);
-                        }
-                        else
-                            ++it;
-                    }
-                    // If data already exists - fill all missing blocks with it.
-                    if (source_block_offset >= 0)
-                    {
-                        for (int64_t sibling_index : identical_siblings)
-                        {
-                            // Reuse data in identical blocks
-                            int64_t destination_block_offset = sibling_index * block_size;
-                            zinc_log("% 4d offset use from % 4d", destination_block_offset, source_block_offset);
-                            memmove(&fp[destination_block_offset], &fp[source_block_offset], block_size);
-                            // Mark blocks as completed
-                            if (delta.map.size() > destination_block_offset)
-                            {
-                                auto& sibling_de = delta.map[destination_block_offset];
-                                sibling_de.local_offset = sibling_de.block_offset;
-                            }
-                        }
-                        goto finalize_block;
-                    }
-                }
-
-                // There were no identical siblings or none of them were downloaded yet.
+                // Here we are pretty sure we do not already have the data. If old file already had the data then delta
+                // resolution would already have de->local_offset set and this branch would not be executed. If there
+                // are more than one identical block then first block gets downloaded through this branch and all of
+                // it's siblings get their local offset set here so download will not be carried out for the identical
+                // block of data again.
                 zinc_log("% 4d offset download", de->block_offset);
                 auto data = get_data(de->block_index, block_size);
                 memcpy(&fp[de->block_offset], &data.front(), data.size());
+
+                auto identical_blocks_it = delta.identical_blocks.find(de->block_index);
+                if (identical_blocks_it != delta.identical_blocks.end())
+                {
+                    // Other identical blocks will copy data from just downloaded sibling.
+                    for (int64_t sibling_index : identical_blocks_it->second)
+                    {
+                        if (sibling_index < delta.map.size())
+                            delta.map[sibling_index].local_offset = de->block_offset;
+                    }
+                }
             }
             else
             {
@@ -350,8 +319,6 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
             }
         }
 
-finalize_block:
-        completed.insert(de->block_index);
         if (priority_block)
             de->block_index = -1;                // Mark block as invalid so it is not handled twice in this loop.
         else

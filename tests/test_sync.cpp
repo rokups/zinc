@@ -150,3 +150,8 @@ TEST_CASE ("IdenticalBlockDownload")
 {
     REQUIRE(data_sync_test("1234_1234_000001234_", "00000000000000000000", 5));
 }
+
+TEST_CASE ("FuzzTest3")
+{
+    REQUIRE(data_sync_test("h'10{'6rI8RI5N@RI5N@u+!BkRI5N@u+!Bk29H0<p+n{ZIu{*", "h'10 |Av2{'6rI8RI5N@u+!Bk2I,Qq){QkZIuX/", 5));
+}
