@@ -87,8 +87,16 @@ int main()
         remote_data.resize(static_cast<unsigned long>(remote_data_size));
         if (remote_data_size > local_data_size)
         {
-            ByteArray diff_data = get_random_array(remote_data_size - local_data_size);
-            memcpy(&remote_data[local_data_size], &diff_data.front(), diff_data.size());
+            int64_t size_diff = remote_data_size - local_data_size;
+            int64_t move_diff = random<int64_t>(0, size_diff);
+            if (move_diff > 0)
+            {
+                ByteArray random_data = get_random_array(move_diff);
+                memmove(&remote_data[move_diff], &remote_data[0], local_data_size);
+                memcpy(&remote_data[0], &random_data[0], random_data.size());
+            }
+            ByteArray random_data = get_random_array(remote_data_size - local_data_size - move_diff);
+            memcpy(&remote_data[local_data_size + move_diff], &random_data[0], random_data.size());
         }
         remote_data = mix_array(remote_data, random(1, 5));
 
