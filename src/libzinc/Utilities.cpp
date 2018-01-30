@@ -46,13 +46,15 @@ std::wstring to_wstring(const std::string &str)
 
 int truncate(const char *file_path, int64_t file_size)
 {
-    HANDLE hFile = CreateFileW(to_wstring(file_path).c_str(), GENERIC_WRITE, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    std::wstring wfile_path = to_wstring(file_path);
+    std::replace(wfile_path.begin(), wfile_path.end(), '/', '\\');
+    HANDLE hFile = CreateFileW(wfile_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
     if (!hFile || hFile == INVALID_HANDLE_VALUE)
         return (int)GetLastError();
 
     LARGE_INTEGER distance;
     distance.QuadPart = file_size;
-    if (SetFilePointerEx(hFile, distance, 0, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
+    if (!SetFilePointerEx(hFile, distance, 0, FILE_BEGIN))
     {
         CloseHandle(hFile);
         return INVALID_SET_FILE_POINTER;
@@ -81,8 +83,8 @@ int64_t round_up_to_multiple(int64_t value, int64_t multiple_of)
 int64_t get_file_size(const char* file_path)
 {
 #if _WIN32
-    struct _stat32i64 st = {};
-    if (_wstat32i64(to_wstring(file_path).c_str(), &st) == 0)
+    struct _stat64 st = {};
+    if (_wstat64(to_wstring(file_path).c_str(), &st) == 0)
         return st.st_size;
 #else
     struct stat64 st = {};
