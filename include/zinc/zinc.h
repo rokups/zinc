@@ -109,6 +109,10 @@ public:
     virtual bool success() const = 0;
     /// Block until task succeeds or fails and return.
     virtual ITask<T>* wait() = 0;
+    /// Return total number of bytes task is processing.
+    virtual int64_t size_total() = 0;
+    /// Return number of bytes task has processed already.
+    virtual int64_t size_done() = 0;
 };
 
 /*!

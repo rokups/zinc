@@ -92,6 +92,16 @@ public:
 
         return this;
     }
+
+    int64_t size_total() override
+    {
+        return _bytes_total;
+    }
+
+    int64_t size_done() override
+    {
+        return _bytes_done;
+    }
 };
 
 }
