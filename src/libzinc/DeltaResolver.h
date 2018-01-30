@@ -55,7 +55,7 @@ public:
 protected:
     FileMemoryMap _mapping;
     const RemoteFileHashList* _hashes;
-    size_t _block_size = 0;
+    int64_t _block_size = 0;
 #if ZINC_USE_SKA_FLAT_HASH_MAP
     ska::flat_hash_map<WeakHash, ska::flat_hash_map<StrongHash, int64_t, StrongHashHashFunction>> lookup_table;
 #else

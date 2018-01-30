@@ -38,14 +38,7 @@ PYBIND11_PLUGIN(pyzinc)
     py::bind_vector<RemoteFileHashList>(m, "RemoteFileHashList");
     py::bind_vector<ByteArray>(m, "ByteArray");
 
-    py::class_<StrongHash>(m, "StrongHash")
-        .def(py::init<>())
-        .def(py::init<const void*, size_t>())
-        .def(py::init<const std::string&>())
-        .def("__str__", &StrongHash::to_string);
-
     py::class_<BlockHashes>(m, "BlockHashes")
-        .def(py::init<WeakHash, const std::string&>())
         .def_readonly("weak", &BlockHashes::weak)
         .def_readonly("strong", &BlockHashes::strong);
 

@@ -33,45 +33,31 @@
 #if !_WIN32
 #    include <unistd.h>
 #endif
-#include "StrongHash.h"
 
 
 namespace zinc
 {
 
-typedef uint32_t WeakHash;
+#if ZINC_WITH_STRONG_HASH_FNV
+#   define ZINC_STRONG_HASH_SIZE 8
+#else
+#   define ZINC_STRONG_HASH_SIZE 20
+#endif
+
+using WeakHash = uint32_t;
+using StrongHash = std::array<uint8_t, ZINC_STRONG_HASH_SIZE>;
 
 struct BlockHashes
 {
-    BlockHashes();
-    BlockHashes(const WeakHash& weak, const StrongHash& strong);
-    BlockHashes(const WeakHash& weak, const std::string& strong);
-    BlockHashes(const BlockHashes& other) = default;
-    BlockHashes& operator=(const BlockHashes& other) = default;
-
-    WeakHash weak;
-    StrongHash strong;
+    WeakHash weak{};
+    StrongHash strong{};
 };
 
 struct DeltaElement
 {
-    DeltaElement() { }
-    DeltaElement(size_t block_index, size_t block_offset);
-
     int64_t block_index = -1;
-    int64_t local_offset = -1;
     int64_t block_offset = -1;
-
-    bool is_download() { return local_offset == -1; }
-    bool is_copy()     { return local_offset >= 0 && !is_done(); }
-    bool is_done()     { return block_offset == local_offset; }
-    bool is_valid()    { return block_index >= 0 && block_offset >= 0; }
-    bool operator==(const DeltaElement& other)
-    {
-        return block_index == other.block_index &&
-               block_offset == other.block_offset &&
-               local_offset == other.local_offset;
-    }
+    int64_t local_offset = -1;
 };
 
 typedef std::vector<uint8_t>                                                                     ByteArray;

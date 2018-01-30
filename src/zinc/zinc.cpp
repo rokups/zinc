@@ -27,6 +27,7 @@
 #include <zinc/zinc.h>
 #include <json.hpp>
 #include <CLI11.hpp>
+#include <utility>
 #include "../libzinc/Utilities.hpp"
 
 using namespace nlohmann;
@@ -37,8 +38,8 @@ class ProgressBar
 {
 public:
     ProgressBar() = default;
-    ProgressBar(const std::string& message)
-        : _message(message)
+    explicit ProgressBar(std::string message)
+        : _message(std::move(message))
     {
     }
 
@@ -67,7 +68,7 @@ protected:
 class FileReader
 {
 public:
-    FileReader(const std::string& file_path)
+    explicit FileReader(const std::string& file_path)
     {
         _fp = fopen(file_path.c_str(), "rb");
         if (!_fp)
@@ -94,7 +95,7 @@ public:
     };
 
 protected:
-    FILE* _fp = 0;
+    FILE* _fp = nullptr;
 };
 
 size_t suggest_block_size(int64_t file_size)
@@ -104,8 +105,8 @@ size_t suggest_block_size(int64_t file_size)
 
 void hex_to_bytes(const std::string& input, uint8_t* output)
 {
-    for (auto i = 0; i < input.length() / 2; i++)
-        output[i] = (uint8_t)strtol(input.substr(static_cast<unsigned long>(i * 2), 2).c_str(), nullptr, 16);
+    for (unsigned long i = 0; i < input.length() / 2; i++)
+        output[i] = (uint8_t)strtol(input.substr(i * 2, 2).c_str(), nullptr, 16);
 }
 
 int main(int argc, char* argv[])
@@ -162,7 +163,7 @@ int main(int argc, char* argv[])
             output["block_size"] = block_size;
             output["blocks"] = {};
             for (const auto& h: checksums_task->result())
-                output["blocks"].push_back(json::array({h.weak, h.strong.to_string()}));
+                output["blocks"].push_back(json::array({h.weak, zinc::bytes_to_string(h.strong)}));
 
             if (FILE* fp = fopen(output_file.c_str(), "w+b"))
             {
@@ -186,11 +187,11 @@ int main(int argc, char* argv[])
 
             zinc::RemoteFileHashList hashes;
             hashes.reserve(blocks.size());
-            for (auto it = blocks.begin(); it != blocks.end(); it++)
+            for (const auto& block : blocks)
             {
                 zinc::BlockHashes h;
-                h.weak = (*it)[0].get<zinc::WeakHash>();
-                hex_to_bytes((*it)[1].get<std::string>(), (uint8_t*)h.strong.data());
+                h.weak = block[0].get<zinc::WeakHash>();
+                hex_to_bytes(block[1].get<std::string>(), (uint8_t*)h.strong.data());
                 hashes.push_back(h);
             }
 

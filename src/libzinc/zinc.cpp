@@ -24,6 +24,7 @@
 #include "zinc/zinc.h"
 #include <cstring>
 #include <cassert>
+#include <cstring>
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
@@ -32,7 +33,6 @@
 #include "Utilities.hpp"
 #include "DeltaResolver.h"
 #include "HashBlocksTask.h"
-
 
 namespace zinc
 {
@@ -43,27 +43,29 @@ struct ByteArrayRef
     ByteArray data;
 };
 
-DeltaElement::DeltaElement(size_t block_index, size_t block_offset)
-    : block_index(block_index)
-    , block_offset(block_offset)
+inline bool is_download(DeltaElement& de)
 {
+    return de.local_offset == -1;
 }
 
-BlockHashes::BlockHashes()
+inline bool is_done(DeltaElement& de)
 {
-    weak = 0;
+    return de.block_offset == de.local_offset;
 }
 
-BlockHashes::BlockHashes(const WeakHash& weak, const StrongHash& strong)
+inline bool is_copy(DeltaElement& de)
 {
-    this->weak = weak;
-    this->strong = strong;
+    return de.local_offset >= 0 && !is_done(de);
 }
 
-BlockHashes::BlockHashes(const WeakHash& weak, const std::string& strong)
+inline bool is_valid(DeltaElement& de)
 {
-    this->weak = weak;
-    this->strong = StrongHash(strong);
+    return de.block_index >= 0 && de.block_offset >= 0;
+}
+
+inline bool operator==(const DeltaElement& a, const DeltaElement& b)
+{
+    return a.block_index == b.block_index && a.block_offset == b.block_offset && a.local_offset == b.local_offset;
 }
 
 std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const void* file_data, int64_t file_size,
@@ -112,15 +114,19 @@ std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const char* file_path, si
                                                        const RemoteFileHashList& hashes, size_t max_threads)
 {
     auto file_size = get_file_size(file_path);
+    int64_t truncate_to;
     if (file_size > 0)
+        truncate_to = round_up_to_multiple(file_size, block_size);
+    else
+        truncate_to = block_size * hashes.size();
+
+    auto err = truncate(file_path, truncate_to);
+    if (err != 0)
     {
-        auto err = truncate(file_path, round_up_to_multiple(file_size, block_size));
-        if (err != 0)
-        {
-            zinc_error<std::system_error>("Could not truncate file_path to required size.", err);
-            return std::make_unique<DeltaResolver>();
-        }
+        zinc_error<std::system_error>("Could not truncate file_path to required size.", err);
+        return std::make_unique<DeltaResolver>();
     }
+
     return std::make_unique<DeltaResolver>(file_path, block_size, hashes, max_threads);
 }
 
@@ -146,7 +152,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
         for (auto& delta_element : delta.map)
         {
             // Only keep record of elements that require data from other parts of the file. Anything else is irrelevant.
-            if (delta_element.is_copy())
+            if (is_copy(delta_element))
                 ref_cache[delta_element.local_offset / block_size].push_back(delta_element);
             block_index++;
         }
@@ -206,7 +212,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
         {
             // Handle blocks normally, walking from the back of the file.
             de = &delta.map.back();
-            if (!de->is_valid())
+            if (!is_valid(*de))
             {
                 // This block was already handled.
                 delta.map.pop_back();
@@ -215,7 +221,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
         }
 
         // Correct data is already in place.
-        if (!de->is_done())
+        if (!is_done(*de))
         {
             // Cache data if writing current block overwrites data needed by any other blocks.
             {
@@ -261,12 +267,12 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                 }
                 else if (cached_blocks > 0)
                 {
-                    assert(maybe_cache.is_valid());
+                    assert(is_valid(maybe_cache));
                     cache_block(maybe_cache);
                 }
             }
 
-            if (de->is_download())
+            if (is_download(*de))
             {
                 // Here we are pretty sure we do not already have the data. If old file already had the data then delta
                 // resolution would already have de->local_offset set and this branch would not be executed. If there

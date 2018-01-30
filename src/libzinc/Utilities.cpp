@@ -26,6 +26,11 @@
 #if _WIN32
 #   include <windows.h>
 #endif
+#if ZINC_WITH_STRONG_HASH_SHA1
+#   include "crypto/sha1.h"
+#else
+#   include "crypto/fnv1a.h"
+#endif
 
 
 namespace zinc
@@ -107,6 +112,51 @@ int touch(const char* file_path)
     }
 
     return -1;
+}
+
+StrongHash strong_hash(const void* m, size_t mlen)
+{
+    StrongHash result{};
+#if ZINC_WITH_STRONG_HASH_FNV
+    auto hash = fnv1a64(m, mlen);
+    static_assert(sizeof(hash) == sizeof(_data));
+    memcpy(result.data(), &hash, sizeof(hash))
+    static_assert(result.size() == sizeof(hash));
+#else
+    sha1_ctxt sha1{};
+    sha1_init(&sha1);
+    sha1_loop(&sha1, (const uint8_t*)m, mlen);
+    sha1_result(&sha1, result.data());
+    static_assert(result.size() == SHA1_RESULTLEN);
+#endif
+    return result;
+}
+
+std::vector<uint8_t> string_to_bytes(const std::string& str)
+{
+    std::vector<uint8_t> result{};
+
+    if (str.length() != (result.size() * 2))
+        return result;
+
+    char buf[3];
+    for (size_t i = 0; i < result.size(); i++)
+    {
+        memcpy(buf, &str.front() + i * 2, 2);
+        buf[2] = 0;
+        result[i] = (uint8_t)strtol(buf, nullptr, 16);
+    }
+
+    return result;
+}
+
+std::string bytes_to_string(const uint8_t* bytes, size_t blen)
+{
+    std::string result;
+    result.resize(blen * 2);
+    for (size_t i = 0; i < blen; i++)
+        sprintf(&result.front() + i * 2, "%02x", bytes[i]);
+    return result;
 }
 
 }

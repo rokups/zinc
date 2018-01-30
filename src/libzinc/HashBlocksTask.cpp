@@ -22,6 +22,7 @@
  * SOFTWARE.
  */
 #include "HashBlocksTask.h"
+#include "Utilities.hpp"
 
 
 zinc::HashBlocksTask::HashBlocksTask()
@@ -75,7 +76,7 @@ void zinc::HashBlocksTask::process(size_t block_start, size_t block_count)
     // Pre-process last possibly incomplete block first.
     {
         block_count--;
-        auto last_block_size = std::min(_bytes_total - (block_start + block_count) * _block_size, _block_size);
+        auto last_block_size = std::min<int64_t>(_bytes_total - (block_start + block_count) * _block_size, _block_size);
         auto fp_last = fp + block_count * _block_size;
         std::vector<uint8_t> padded_block;
         if (last_block_size < _block_size)
@@ -87,7 +88,7 @@ void zinc::HashBlocksTask::process(size_t block_start, size_t block_count)
 
         BlockHashes& h = _result[block_start + block_count];
         h.weak = RollingChecksum(fp_last, _block_size).digest();
-        h.strong = StrongHash(fp_last, _block_size);
+        h.strong = strong_hash(fp_last, _block_size);
         _bytes_done += last_block_size;
     }
 
@@ -103,7 +104,7 @@ void zinc::HashBlocksTask::process(size_t block_start, size_t block_count)
 
         BlockHashes& h = _result[block_index];
         h.weak = RollingChecksum(fp, _block_size).digest();
-        h.strong = StrongHash(fp, _block_size);
+        h.strong = strong_hash(fp, _block_size);
         fp += _block_size;
         _bytes_done += _block_size;
     }

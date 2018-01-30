@@ -24,6 +24,7 @@
 #include <cassert>
 #include "DeltaResolver.h"
 #include "RollingChecksum.hpp"
+#include "Utilities.hpp"
 
 
 namespace zinc
@@ -82,8 +83,8 @@ void DeltaResolver::queue_tasks()
 #endif
 
     _result.map.reserve(_hashes->size());
-    for (size_t block_index = 0; block_index < _hashes->size(); block_index++)
-        _result.map.emplace_back(DeltaElement(block_index, block_index * _block_size));
+    for (int64_t block_index = 0; block_index < _hashes->size(); block_index++)
+        _result.map.emplace_back(DeltaElement{block_index, block_index * _block_size});
 
     {
         int64_t block_index = 0;
@@ -159,7 +160,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                 return;
         }
 
-        size_t current_block_size = (size_t)std::min<int64_t>(_block_size, block_length);
+        auto current_block_size = (size_t)std::min<int64_t>(_block_size, block_length);
         if (weak.isEmpty())
         {
             w_start += current_block_size;
@@ -189,8 +190,8 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
         auto it = lookup_table.find(weak_digest);
         if (it != lookup_table.end())
         {
-            auto strong_hash = StrongHash(w_start, current_block_size);
-            auto jt = it->second.find(strong_hash);
+            auto strong = strong_hash(w_start, current_block_size);
+            auto jt = it->second.find(strong);
             if (jt != it->second.end())
             {
                 if (last_failed)
@@ -206,15 +207,15 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                 if (local_offset != block_offset && block_offset < last_local_hash_check_offset)
                 {
                     auto lh_it = local_hash_cache.find(block_offset);
-                    bool is_identical = false;
+                    bool is_identical;
                     if (lh_it == local_hash_cache.end())
                     {
-                        StrongHash local_hash(&_file_data[block_offset], _block_size);
+                        StrongHash local_hash = strong_hash(&_file_data[block_offset], static_cast<size_t>(_block_size));
                         local_hash_cache[block_offset] = local_hash;
-                        is_identical = local_hash == strong_hash;
+                        is_identical = local_hash == strong;
                     }
                     else
-                        is_identical = lh_it->second == strong_hash;
+                        is_identical = lh_it->second == strong;
 
                     if (is_identical)
                     {

@@ -24,9 +24,10 @@
 #pragma once
 
 
-#include <stdint.h>
-#include <string.h>
+#include <cstdint>
+#include <cstring>
 #include <string>
+#include "zinc/zinc.h"
 
 
 namespace zinc
@@ -39,5 +40,13 @@ int truncate(const char* file_path, int64_t file_size);
 int64_t round_up_to_multiple(int64_t value, int64_t multiple_of);
 int64_t get_file_size(const char* file_path);
 int touch(const char* file_path);
+StrongHash strong_hash(const void* m, size_t mlen);
+std::vector<uint8_t> string_to_bytes(const std::string& str);
+std::string bytes_to_string(const uint8_t* bytes, size_t blen);
+template<typename T>
+std::string bytes_to_string(const T& container)
+{
+    return bytes_to_string(&container.front(), container.size());
+}
 
 };
