@@ -245,4 +245,15 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
     _bytes_done += bytes_consumed;
 }
 
+DeltaMap& DeltaResolver::result()
+{
+    // TODO: Fix this ugly workaround.
+    // When task is done resolving deltas it keeps file mapping open. This prevents file patching function opening a new
+    // file mapping if task object is not destroyed yet. By closing mapping here we allow user to dispose of task object
+    // whenever it is convenient, like when object goes out of scope, after patching the file.
+    if (success())
+        _mapping.close();
+    return _result;
+}
+
 }
