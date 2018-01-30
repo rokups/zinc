@@ -121,13 +121,13 @@ StrongHash strong_hash(const void* m, size_t mlen)
     auto hash = fnv1a64(m, mlen);
     static_assert(sizeof(hash) == sizeof(_data));
     memcpy(result.data(), &hash, sizeof(hash))
-    static_assert(result.size() == sizeof(hash));
+    static_assert(result.size() == sizeof(hash), "Unexpected strong hash size");
 #else
     sha1_ctxt sha1{};
     sha1_init(&sha1);
     sha1_loop(&sha1, (const uint8_t*)m, mlen);
     sha1_result(&sha1, result.data());
-    static_assert(result.size() == SHA1_RESULTLEN);
+    static_assert(result.size() == SHA1_RESULTLEN, "Unexpected strong hash size");
 #endif
     return result;
 }
