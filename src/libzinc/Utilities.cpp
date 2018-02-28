@@ -21,10 +21,13 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+#include <cassert>
 #include "Utilities.hpp"
-#include <sys/stat.h>
 #if _WIN32
 #   include <windows.h>
+#   include <algorithm>
+#else
+#   include <sys/stat.h>
 #endif
 #if ZINC_WITH_STRONG_HASH_SHA1
 #   include "crypto/sha1.h"
@@ -134,10 +137,8 @@ StrongHash strong_hash(const void* m, size_t mlen)
 
 std::vector<uint8_t> string_to_bytes(const std::string& str)
 {
-    std::vector<uint8_t> result{};
-
-    if (str.length() != (result.size() * 2))
-        return result;
+    assert((str.length() % 2) == 0);
+    std::vector<uint8_t> result(str.length() / 2, '\0');
 
     char buf[3];
     for (size_t i = 0; i < result.size(); i++)
