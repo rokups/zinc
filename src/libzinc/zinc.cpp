@@ -75,7 +75,7 @@ std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const void* file_
     if (file_data == nullptr || file_size == 0 || block_size == 0)
     {
         zinc_error<std::invalid_argument>("file_data, file_size and block_size must be positive numbers.");
-        return std::make_unique<HashBlocksTask>();
+        return std::unique_ptr<HashBlocksTask>{};
     }
     return std::make_unique<HashBlocksTask>(file_data, file_size, block_size, max_threads);
 }
@@ -87,7 +87,7 @@ std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_
     if (file_path == nullptr || block_size == 0)
     {
         zinc_error<std::invalid_argument>("file_path and block_size must not be null.");
-        return std::make_unique<HashBlocksTask>();
+        return std::unique_ptr<HashBlocksTask>{};
     }
     return std::make_unique<HashBlocksTask>(file_path, block_size, max_threads);
 }
@@ -98,13 +98,13 @@ std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const void* file_data, in
     if ((file_size % block_size) != 0)
     {
         zinc_error<std::invalid_argument>("file_size must be multiple of block_size.");
-        return std::make_unique<DeltaResolver>();
+        return std::unique_ptr<DeltaResolver>{};
     }
 
     if (file_data == nullptr)
     {
         zinc_log("File is not present, delta equals to full download.");
-        return std::make_unique<DeltaResolver>();
+        return std::unique_ptr<DeltaResolver>{};
     }
 
     return std::make_unique<DeltaResolver>(file_data, file_size, block_size, hashes, max_threads);
@@ -124,7 +124,7 @@ std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const char* file_path, si
     if (err != 0)
     {
         zinc_error<std::system_error>("Could not truncate file_path to required size.", err);
-        return std::make_unique<DeltaResolver>();
+        return std::unique_ptr<DeltaResolver>{};
     }
 
     return std::make_unique<DeltaResolver>(file_path, block_size, hashes, max_threads);
