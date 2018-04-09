@@ -109,6 +109,18 @@ void hex_to_bytes(const std::string& input, uint8_t* output)
         output[i] = (uint8_t)strtol(input.substr(i * 2, 2).c_str(), nullptr, 16);
 }
 
+std::string pretty_print_size(int64_t bytes)
+{
+    static const char* sizes[] = {"B", "KB", "MB", "GB", "PB"};
+    auto i = 0;
+    while (bytes >= 1024 && i < 5)
+    {
+        bytes /= 1024;
+        i++;
+    }
+    return std::to_string(bytes) + " " + sizes[i];
+}
+
 int main(int argc, char* argv[])
 {
     bool hash_file = false;
@@ -204,9 +216,24 @@ int main(int argc, char* argv[])
             } while (!delta_task->is_done());
             auto delta = delta_task->result();
 
+            int64_t bytes_moved = 0;
+            int64_t bytes_downloaded = 0;
+            for (const auto& d : delta.map)
+            {
+                if (d.local_offset == -1)
+                    bytes_downloaded += block_size;
+                else if (d.local_offset != d.block_offset)
+                    bytes_moved += block_size;
+            }
+            std::cout << "Total size:       " << pretty_print_size(file_size) << std::endl;
+            std::cout << "Moved bytes:      " << pretty_print_size(bytes_moved) << std::endl;
+            std::cout << "Downloaded bytes: " << pretty_print_size(bytes_downloaded) << std::endl;
+            std::cout << "Matched bytes:    " << pretty_print_size(file_size - bytes_downloaded - bytes_moved) << std::endl;
+
             FileReader reader(input_file);
             bar = ProgressBar("Patching file    ");
-            zinc::patch_file(output_file.c_str(), file_size, block_size, delta, std::bind(&FileReader::get_data, &reader, _1, _2), progress_report);
+            if (!zinc::patch_file(output_file.c_str(), file_size, block_size, delta, std::bind(&FileReader::get_data, &reader, _1, _2), progress_report))
+                std::cerr << "Patching file failed due to unknown error.";
         }
     }
     catch (std::invalid_argument& e)
