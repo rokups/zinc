@@ -33,7 +33,7 @@ written. Your SSD will be happy.
       | block_checksums = get_block_checksums(new_file_path, block_size)      |
       +-----------------------------------------------------------------------+
                                         |
-                               [ Transport (http) ]
+                         [ Transport (for example http) ]
                                         |
     +---------------------------------- Client ---------------------------------+
     | delta = get_differences_delta(old_file_path, block_size, block_checksums) |
