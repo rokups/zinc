@@ -77,7 +77,8 @@ std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const void* file_
         zinc_error<std::invalid_argument>("file_data, file_size and block_size must be positive numbers.");
         return std::unique_ptr<HashBlocksTask>{};
     }
-    return std::make_unique<HashBlocksTask>(file_data, file_size, block_size, max_threads);
+    return std::make_unique<HashBlocksTask>(new Buffer(const_cast<void*>(file_data), file_size), block_size,
+        max_threads);
 }
 
 std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_path, size_t block_size,
@@ -89,7 +90,12 @@ std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_
         zinc_error<std::invalid_argument>("file_path and block_size must not be null.");
         return std::unique_ptr<HashBlocksTask>{};
     }
-    return std::make_unique<HashBlocksTask>(file_path, block_size, max_threads);
+#if ZINC_NO_MMAP
+    auto* file = new File(file_path);
+#else
+    auto* file = new MemoryMappedFile(file_path);
+#endif
+    return std::make_unique<HashBlocksTask>(file, block_size, max_threads);
 }
 
 std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
@@ -107,7 +113,7 @@ std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const void* file_data, in
         return std::unique_ptr<DeltaResolver>{};
     }
 
-    return std::make_unique<DeltaResolver>(file_data, file_size, block_size, hashes, max_threads);
+    return std::make_unique<DeltaResolver>(new Buffer(const_cast<void*>(file_data), file_size), block_size, hashes, max_threads);
 }
 
 std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const char* file_path, size_t block_size,
@@ -126,13 +132,19 @@ std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const char* file_path, si
         zinc_error<std::system_error>("Could not truncate file_path to required size.", err);
         return std::unique_ptr<DeltaResolver>{};
     }
-
-    return std::make_unique<DeltaResolver>(file_path, block_size, hashes, max_threads);
+#if ZINC_NO_MMAP
+    auto* file = new File(file_path);
+#else
+    auto* file = new MemoryMappedFile(file_path);
+#endif
+    return std::make_unique<DeltaResolver>(file, block_size, hashes, max_threads);
 }
 
-bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
+bool patch_file(IFile* file, size_t block_size, DeltaMap& delta,
                 const FetchBlockCallback& get_data, const ProgressCallback& report_progress)
 {
+    auto file_size = file->get_size();
+
     if ((file_size % block_size) != 0)
     {
         zinc_error<std::invalid_argument>("File data must be multiple of a block size.");
@@ -157,7 +169,6 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
             block_index++;
         }
     }
-    auto* fp = (uint8_t*)file_data;
     // Block cache is a temporary storage for blocks that will be required elsewhere in the file but are about to be
     // overwritten.
 #if ZINC_USE_SKA_FLAT_HASH_MAP
@@ -177,7 +188,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
         {
             ByteArrayRef block{};
             block.data.resize(block_size, 0);
-            memcpy(&block.data.front(), &fp[cacheable.local_offset], block_size);
+            memcpy(&block.data.front(), file->read(cacheable.local_offset, block_size).get(), block_size);
             block_cache[cacheable.local_offset] = std::move(block);
             zinc_log("% 4d offset +cache refcount=1", cacheable.local_offset);
         }
@@ -281,7 +292,7 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                 // block of data again.
                 zinc_log("% 4d offset download", de->block_offset);
                 auto data = get_data(de->block_index, block_size);
-                memcpy(&fp[de->block_offset], &data.front(), data.size());
+                file->write(&data.front(), de->block_offset, data.size());
 
                 auto identical_blocks_it = delta.identical_blocks.find(de->block_index);
                 if (identical_blocks_it != delta.identical_blocks.end())
@@ -301,7 +312,8 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                 {   // Use cached block if it exists
                     ByteArrayRef& cached_block = it_cache->second;
                     cached_block.refcount--;
-                    memmove(&fp[de->block_offset], &cached_block.data.front(), cached_block.data.size());
+
+                    file->write(&cached_block.data.front(), de->block_offset, cached_block.data.size());
                     zinc_log("% 4d offset using cached offset %d", de->block_offset, de->local_offset);
 
                     // Remove block from cache only if delta map does not reference block later
@@ -313,7 +325,8 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
                 }
                 else
                 {   // Copy block from later file position
-                    memmove(&fp[de->block_offset], &fp[de->local_offset], block_size);
+                    auto block = file->read(de->local_offset, block_size);
+                    file->write(block.get(), de->block_offset, block_size);
                     zinc_log("% 4d offset using file data offset %d", de->block_offset, de->local_offset);
                     // Delete handled block from reference cache lookup table if it exists there. This prevents handled
                     // blocks form getting cached as that cached data would not be needed any more.
@@ -343,6 +356,13 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
     return true;
 }
 
+bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
+    const FetchBlockCallback& get_data, const ProgressCallback& report_progress)
+{
+    auto file = std::make_unique<Buffer>(file_data, file_size);
+    return patch_file(file.get(), block_size, delta, get_data, report_progress);
+}
+
 bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
                 const FetchBlockCallback& get_data, const ProgressCallback& report_progress)
 {
@@ -368,13 +388,16 @@ bool patch_file(const char* file_path, int64_t file_final_size, size_t block_siz
         return false;
     }
 
-    FileMemoryMap mapping;
-    if (!mapping.open(file_path))
-        return false;
+#if ZINC_NO_MMAP
+    auto file = std::make_unique<File>(file_path);
+#else
+    auto file = std::make_unique<MemoryMappedFile>(file_path);
+#endif
 
-    if (patch_file(mapping.get_data(), mapping.get_size(), block_size, delta, get_data, report_progress))
+    if (patch_file(file.get(), block_size, delta, get_data, report_progress))
     {
-        mapping.close();
+        file = nullptr;
+
         err = truncate(file_path, file_final_size);
         if (err != 0)
         {

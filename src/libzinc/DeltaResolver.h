@@ -40,13 +40,8 @@ namespace zinc
 class DeltaResolver : public Task<DeltaMap>
 {
 public:
-    /// Construct dummy task that does nothing.
-    DeltaResolver();
-    /// Construct from memory block.
-    DeltaResolver(const void* file_data, int64_t file_size, size_t block_size, const RemoteFileHashList& hashes,
-                  size_t thread_count);
     /// Construct from file.
-    DeltaResolver(const char* file_name, size_t block_size, const RemoteFileHashList& hashes, size_t thread_count);
+    DeltaResolver(IFile* file, size_t block_size, const RemoteFileHashList& hashes, size_t thread_count);
 
     ~DeltaResolver() override = default;
 

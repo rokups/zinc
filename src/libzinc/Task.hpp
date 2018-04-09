@@ -26,6 +26,7 @@
 
 #include "ThreadPool.h"
 #include <chrono>
+#include "File.hpp"
 
 
 namespace zinc
@@ -35,7 +36,7 @@ template<typename T>
 class Task : public ITask<T>
 {
 protected:
-    const uint8_t* _file_data = nullptr;
+    IFile* _file = nullptr;
     int64_t _bytes_total = 0;
     std::atomic<int64_t> _bytes_done;
     std::atomic<bool> _cancel;
@@ -44,11 +45,11 @@ protected:
     T _result;
 
 public:
-    Task(const void* file_data, int64_t file_size, size_t thread_count)
-        : _file_data(static_cast<const uint8_t*>(file_data))
-          , _bytes_total(file_size)
-          , _thread_count(thread_count)
-          , _pool(thread_count)
+    Task(IFile* file, size_t thread_count)
+        : _file(file)
+        , _bytes_total(file->get_size())
+        , _thread_count(thread_count)
+        , _pool(thread_count)
     {
         _cancel.store(false);
         _bytes_done.store(0);
@@ -56,7 +57,11 @@ public:
 
     Task(const Task& other) = delete;
 
-    ~Task() override = default;
+    ~Task() override
+    {
+        delete _file;
+        _file = nullptr;
+    }
 
     float progress() const override
     {
@@ -70,7 +75,7 @@ public:
 
     bool success() const override
     {
-        return !_cancel.load() && _bytes_total == _bytes_done && _file_data > 0;
+        return !_cancel.load() && _bytes_total == _bytes_done && _file->is_valid();
     }
 
     T& result() override

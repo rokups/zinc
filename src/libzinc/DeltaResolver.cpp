@@ -30,44 +30,18 @@
 namespace zinc
 {
 
-DeltaResolver::DeltaResolver()
-    : Task<DeltaMap>(nullptr, 0, 0)
-    , _hashes(nullptr)
-{
-}
-
-DeltaResolver::DeltaResolver(const void* file_data, int64_t file_size, size_t block_size,
+DeltaResolver::DeltaResolver(IFile* file, size_t block_size,
                              const RemoteFileHashList& hashes, size_t thread_count)
     : _hashes(&hashes)
     , _block_size(block_size)
-    , Task<DeltaMap>(file_data, file_size, thread_count)
+    , Task<DeltaMap>(file, thread_count)
 {
-    assert(file_data != nullptr);
-    assert(file_size > 0);
+    assert(file != nullptr);
     assert(block_size > 0);
     assert(!hashes.empty());
     assert(thread_count > 0);
 
     queue_tasks();
-}
-
-DeltaResolver::DeltaResolver(const char* file_name, size_t block_size, const RemoteFileHashList& hashes,
-                             size_t thread_count)
-    : _hashes(&hashes)
-    , _block_size(block_size)
-    , Task<DeltaMap>(nullptr, 0, thread_count)
-{
-    assert(file_name != nullptr);
-    assert(block_size > 0);
-    assert(!hashes.empty());
-    assert(thread_count > 0);
-
-    if (_mapping.open(file_name))
-    {
-        _file_data = static_cast<const uint8_t*>(_mapping.get_data());
-        _bytes_total = _mapping.get_size();
-        queue_tasks();
-    }
 }
 
 void DeltaResolver::queue_tasks()
@@ -135,19 +109,20 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
 
     // `- block_size` at the end compensates for w_start being increased on the first pass when weak checksum is
     // empty. Checksum is always empty on the first pass.
-    const uint8_t* w_start = _file_data + start_index - _block_size;
+    int64_t w_start_oft = start_index - _block_size;
     if (start_index >= _block_size)
     {
         // `- block_size + 1` adjusts starting pointer so that we start consuming bytes in specified block from the
         // first one. Naturally it must include `block_size - 1` bytes from previous block so that rolling hash is
         // calculated through entire file. Previous block stops after consuming last byte before `start_index`.
-        w_start = w_start - _block_size + 1;
+        w_start_oft = w_start_oft - _block_size + 1;
     }
     RollingChecksum weak;
     WeakHash last_failed_weak = 0;
     int64_t bytes_consumed = 0;
     bool last_failed = false;
     const auto last_local_hash_check_offset = _bytes_total - _block_size;
+    uint8_t prev_block_first_byte = 0;
 
     for (; block_length > 0;)
     {
@@ -161,20 +136,24 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
         }
 
         auto current_block_size = (size_t)std::min<int64_t>(_block_size, block_length);
+        IFile::DataPointer block(nullptr, [](const void*){});
         if (weak.isEmpty())
         {
-            w_start += current_block_size;
+            w_start_oft += current_block_size;
             bytes_consumed += current_block_size;
             block_length -= current_block_size;
-            weak.update(w_start, current_block_size);
+            block = _file->read(w_start_oft, current_block_size);
+            weak.update(block.get(), current_block_size);
         }
         else
         {
             bytes_consumed += 1;
             block_length -= 1;
-            weak.rotate(*w_start, w_start[_block_size]);
-            ++w_start;
+            ++w_start_oft;
+            block = _file->read(w_start_oft, current_block_size);
+            weak.rotate(prev_block_first_byte, *((uint8_t*)block.get() + (current_block_size - 1)));
         }
+        prev_block_first_byte = *(uint8_t*)block.get();
 
         WeakHash weak_digest = weak.digest();
         if (last_failed && last_failed_weak == weak_digest)
@@ -190,7 +169,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
         auto it = lookup_table.find(weak_digest);
         if (it != lookup_table.end())
         {
-            auto strong = strong_hash(w_start, current_block_size);
+            auto strong = strong_hash(block.get(), current_block_size);
             auto jt = it->second.find(strong);
             if (jt != it->second.end())
             {
@@ -198,19 +177,19 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                     last_failed = false;
 
                 int64_t this_block_index = jt->second;
-                auto local_offset = w_start - _file_data;
                 auto block_offset = this_block_index * _block_size;
 
                 // In some cases current block may contain identical data with some later blocks. However these
                 // later blocks may already have correct data present. This check avoids moving data between blocks
                 // if they are identical already.
-                if (local_offset != block_offset && block_offset < last_local_hash_check_offset)
+                if (w_start_oft != block_offset && block_offset < last_local_hash_check_offset)
                 {
                     auto lh_it = local_hash_cache.find(block_offset);
                     bool is_identical;
                     if (lh_it == local_hash_cache.end())
                     {
-                        StrongHash local_hash = strong_hash(&_file_data[block_offset], static_cast<size_t>(_block_size));
+                        auto this_block = _file->read(block_offset, _block_size);
+                        StrongHash local_hash = strong_hash(this_block.get(), static_cast<size_t>(_block_size));
                         local_hash_cache[block_offset] = local_hash;
                         is_identical = local_hash == strong;
                     }
@@ -226,7 +205,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                     }
                 }
 
-                _result.map[this_block_index].local_offset = w_start - _file_data;
+                _result.map[this_block_index].local_offset = w_start_oft;
                 weak.clear();
             }
             else

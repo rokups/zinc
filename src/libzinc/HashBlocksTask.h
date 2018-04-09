@@ -16,17 +16,12 @@ namespace zinc
 class HashBlocksTask : public Task<RemoteFileHashList>
 {
 public:
-    /// Construct dummy task that does nothing.
-    HashBlocksTask();
-    /// Construct from memory block.
-    HashBlocksTask(const void* file_data, int64_t file_size, size_t block_size, size_t thread_count);
-    /// Construct from file.
-    HashBlocksTask(const char* file_name, size_t block_size, size_t thread_count);
+    /// Construct file. This instance becomes owner of `file` pointer.
+    HashBlocksTask(IFile* file, size_t block_size, size_t thread_count);
 
     ~HashBlocksTask() override = default;
 
 protected:
-    FileMemoryMap _mapping;
     size_t _block_size = 0;
 
     /// Queues tasks to threadpool for processing blocks.

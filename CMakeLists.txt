@@ -47,6 +47,7 @@ option(ZINC_WITH_EXCEPTIONS "Enable exceptions" ON)
 option(ZINC_WITH_LOGGING "Enable verbose logging" ${IS_DEBUG})
 option(ZINC_WITH_PYTHON "Enable python bindings" ON)
 option(ZINC_WITH_ADDRESS_SANITIZER "Enable address sanitizer in debug builds" ${IS_DEBUG})
+option(ZINC_NO_MMAP "Use file reading/writing API instead of memory-mapping file" OFF)
 
 add_subdirectory(external)
 add_subdirectory(src)

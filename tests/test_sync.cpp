@@ -99,16 +99,19 @@ TEST_CASE ("SyncFiles")
         result.resize(block_size);
         std::ifstream fi;
         fi.open(file_remote);
-        fi.seekg(block_index * block_size, std::ios_base::beg);
-        fi.read((char*)&result.front(), block_size);
+        if (fi.is_open())
+        {
+            fi.seekg(block_index * block_size, std::ios_base::beg);
+            fi.read((char*) &result.front(), block_size);
+        }
         return result;
     };
 
     auto hashes = zinc::get_block_checksums(file_remote, 5, std::thread::hardware_concurrency())->wait()->result();
-    REQUIRE(hashes.size() > 0);
+    REQUIRE(!hashes.empty());
     auto delta = zinc::get_differences_delta(file_local, 5, hashes, std::thread::hardware_concurrency())->wait()->result();
-    REQUIRE(delta.map.size() > 0);
-    REQUIRE(zinc::patch_file(file_local, zinc::get_file_size(file_remote), 5, delta, get_data) == true);
+    REQUIRE(!delta.map.empty());
+    REQUIRE(zinc::patch_file(file_local, zinc::get_file_size(file_remote), 5, delta, get_data));
 
     zinc::ByteArray remote_data;
     remote_data.resize(zinc::get_file_size(file_remote));

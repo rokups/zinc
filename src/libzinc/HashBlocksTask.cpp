@@ -25,27 +25,11 @@
 #include "Utilities.hpp"
 
 
-zinc::HashBlocksTask::HashBlocksTask()
-    : Task(nullptr, 0, 0)
-{}
-
-zinc::HashBlocksTask::HashBlocksTask(const void* file_data, int64_t file_size, size_t block_size, size_t thread_count)
+zinc::HashBlocksTask::HashBlocksTask(IFile* file, size_t block_size, size_t thread_count)
     : _block_size(block_size)
-      , Task(file_data, file_size, thread_count)
+    , Task(file, thread_count)
 {
     queue_tasks();
-}
-
-zinc::HashBlocksTask::HashBlocksTask(const char* file_name, size_t block_size, size_t thread_count)
-    : _block_size(block_size)
-      , Task(nullptr, 0, thread_count)
-{
-    if (_mapping.open(file_name))
-    {
-        _file_data = static_cast<const uint8_t*>(_mapping.get_data());
-        _bytes_total = _mapping.get_size();
-        queue_tasks();
-    }
 }
 
 void zinc::HashBlocksTask::queue_tasks()
@@ -71,17 +55,21 @@ void zinc::HashBlocksTask::queue_tasks()
 
 void zinc::HashBlocksTask::process(size_t block_start, size_t block_count)
 {
-    const uint8_t* fp = _file_data + block_start * _block_size;
+
+    int64_t fp_offset = block_start * _block_size;
 
     // Pre-process last possibly incomplete block first.
     {
         block_count--;
         auto last_block_size = std::min<int64_t>(_bytes_total - (block_start + block_count) * _block_size, _block_size);
-        auto fp_last = fp + block_count * _block_size;
+        auto fp_last_offset = fp_offset + block_count * _block_size;
+        auto last_block = _file->read(fp_last_offset, last_block_size);
+        const void* fp_last = last_block.get();
         std::vector<uint8_t> padded_block;
         if (last_block_size < _block_size)
         {
             padded_block.resize(_block_size, 0);
+
             memcpy(&padded_block.front(), fp_last, last_block_size);
             fp_last = &padded_block.front();
         }
@@ -103,9 +91,10 @@ void zinc::HashBlocksTask::process(size_t block_start, size_t block_count)
         }
 
         BlockHashes& h = _result[block_index];
-        h.weak = RollingChecksum(fp, _block_size).digest();
-        h.strong = strong_hash(fp, _block_size);
-        fp += _block_size;
+        auto block = _file->read(fp_offset, _block_size);
+        h.weak = RollingChecksum(block.get(), _block_size).digest();
+        h.strong = strong_hash(block.get(), _block_size);
+        fp_offset += _block_size;
         _bytes_done += _block_size;
     }
 }
