@@ -91,7 +91,7 @@ std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_
         return std::unique_ptr<HashBlocksTask>{};
     }
 #if ZINC_NO_MMAP
-    auto* file = new File(file_path);
+    auto* file = new File(file_path, File::Read);
 #else
     auto* file = new MemoryMappedFile(file_path);
 #endif
@@ -133,7 +133,7 @@ std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const char* file_path, si
         return std::unique_ptr<DeltaResolver>{};
     }
 #if ZINC_NO_MMAP
-    auto* file = new File(file_path);
+    auto* file = new File(file_path, File::Read);
 #else
     auto* file = new MemoryMappedFile(file_path);
 #endif
@@ -389,7 +389,7 @@ bool patch_file(const char* file_path, int64_t file_final_size, size_t block_siz
     }
 
 #if ZINC_NO_MMAP
-    auto file = std::make_unique<File>(file_path);
+    auto file = std::make_unique<File>(file_path, File::ReadWrite);
 #else
     auto file = std::make_unique<MemoryMappedFile>(file_path);
 #endif

@@ -100,9 +100,22 @@ protected:
 class File : public IFile
 {
 public:
-    explicit File(const char* file_path)
+    enum Flags : unsigned
     {
-        _fp.open(file_path, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::ate);
+        Read = 1,
+        Write = 2,
+        ReadWrite = Read | Write
+    };
+
+    explicit File(const char* file_path, Flags flags)
+    {
+        auto streamFlags = std::ios_base::binary | std::ios_base::ate;
+        if (flags & Read)
+            streamFlags |= std::ios_base::in;
+        if (flags & Write)
+            streamFlags |= std::ios_base::out;
+
+        _fp.open(file_path, streamFlags);
         if (!_fp.is_open())
             return;
 
@@ -133,7 +146,7 @@ public:
 protected:
     std::fstream _fp;
     int64_t _size = 0;
-    std::mutex _m;
+    std::mutex _m{};
 };
 
 }
