@@ -44,13 +44,13 @@ void zinc::HashBlocksTask::queue_tasks()
     auto blocks_per_thread = std::max<size_t>(block_count / _thread_count + 1, 1);
     for (; block_count >= blocks_per_thread; i++)
     {
-        _pool.enqueue(&HashBlocksTask::process, this, i * blocks_per_thread, blocks_per_thread);
+        _pool.emplace_back(std::move(std::thread(std::bind(&HashBlocksTask::process, this, i * blocks_per_thread, blocks_per_thread))));
         block_count -= blocks_per_thread;
     }
 
     // Last thread may get less blocks to process.
     if (block_count > 0)
-        _pool.enqueue(&HashBlocksTask::process, this, i * blocks_per_thread, block_count);
+        _pool.emplace_back(std::move(std::thread(std::bind(&HashBlocksTask::process, this, i * blocks_per_thread, block_count))));
 }
 
 void zinc::HashBlocksTask::process(size_t block_start, size_t block_count)
@@ -63,8 +63,7 @@ void zinc::HashBlocksTask::process(size_t block_start, size_t block_count)
         block_count--;
         auto last_block_size = std::min<int64_t>(_bytes_total - (block_start + block_count) * _block_size, _block_size);
         auto fp_last_offset = fp_offset + block_count * _block_size;
-        auto last_block = _file->read(fp_last_offset, last_block_size);
-        const void* fp_last = last_block.get();
+        auto fp_last = _file->read(fp_last_offset, last_block_size);
         std::vector<uint8_t> padded_block;
         if (last_block_size < _block_size)
         {
@@ -92,8 +91,8 @@ void zinc::HashBlocksTask::process(size_t block_start, size_t block_count)
 
         BlockHashes& h = _result[block_index];
         auto block = _file->read(fp_offset, _block_size);
-        h.weak = RollingChecksum(block.get(), _block_size).digest();
-        h.strong = strong_hash(block.get(), _block_size);
+        h.weak = RollingChecksum(block, _block_size).digest();
+        h.strong = strong_hash(block, _block_size);
         fp_offset += _block_size;
         _bytes_done += _block_size;
     }

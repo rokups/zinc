@@ -92,7 +92,7 @@ void DeltaResolver::queue_tasks()
         auto start = thread_chunk_size * i;
         auto length = std::min<int64_t>(thread_chunk_size, _bytes_total - (thread_chunk_size * i));
         if (length > 0)
-            _pool.enqueue(&DeltaResolver::process, this, start, length);
+            _pool.emplace_back(std::move(std::thread(std::bind(&DeltaResolver::process, this, start, length))));
     }
 }
 
@@ -136,14 +136,14 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
         }
 
         auto current_block_size = (size_t)std::min<int64_t>(_block_size, block_length);
-        IFile::DataPointer block(nullptr, [](const void*){});
+        const void* block = nullptr;
         if (weak.isEmpty())
         {
             w_start_oft += current_block_size;
             bytes_consumed += current_block_size;
             block_length -= current_block_size;
             block = _file->read(w_start_oft, current_block_size);
-            weak.update(block.get(), current_block_size);
+            weak.update(block, current_block_size);
         }
         else
         {
@@ -151,9 +151,9 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
             block_length -= 1;
             ++w_start_oft;
             block = _file->read(w_start_oft, current_block_size);
-            weak.rotate(prev_block_first_byte, *((uint8_t*)block.get() + (current_block_size - 1)));
+            weak.rotate(prev_block_first_byte, *((uint8_t*)block + (current_block_size - 1)));
         }
-        prev_block_first_byte = *(uint8_t*)block.get();
+        prev_block_first_byte = *(uint8_t*)block;
 
         WeakHash weak_digest = weak.digest();
         if (last_failed && last_failed_weak == weak_digest)
@@ -169,7 +169,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
         auto it = lookup_table.find(weak_digest);
         if (it != lookup_table.end())
         {
-            auto strong = strong_hash(block.get(), current_block_size);
+            auto strong = strong_hash(block, current_block_size);
             auto jt = it->second.find(strong);
             if (jt != it->second.end())
             {
@@ -189,7 +189,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                     if (lh_it == local_hash_cache.end())
                     {
                         auto this_block = _file->read(block_offset, _block_size);
-                        StrongHash local_hash = strong_hash(this_block.get(), static_cast<size_t>(_block_size));
+                        StrongHash local_hash = strong_hash(this_block, static_cast<size_t>(_block_size));
                         local_hash_cache[block_offset] = local_hash;
                         is_identical = local_hash == strong;
                     }
@@ -205,6 +205,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                     }
                 }
 
+                std::lock_guard<std::mutex> lock(_lock_result);
                 _result.map[this_block_index].local_offset = w_start_oft;
                 weak.clear();
             }

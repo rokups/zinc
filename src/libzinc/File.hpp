@@ -25,6 +25,7 @@
 
 
 #include <fstream>
+#include <mutex>
 #include "mmap/FileMemoryMap.h"
 
 namespace zinc
@@ -33,9 +34,8 @@ namespace zinc
 class IFile
 {
 public:
-    using DataPointer = std::unique_ptr<const void, void(*)(const void*)>;
-
-    virtual DataPointer read(int64_t offset, int64_t length) = 0;
+    virtual ~IFile() = default;
+    virtual const void* read(int64_t offset, int64_t length) = 0;
     virtual void write(const void* data, int64_t offset, int64_t length) = 0;
     virtual bool is_valid() { return true; }
     virtual int64_t get_size() = 0;
@@ -50,10 +50,10 @@ public:
     {
     }
 
-    DataPointer read(int64_t offset, int64_t length) override
+    const void* read(int64_t offset, int64_t length) override
     {
         assert(offset + length <= _size);
-        return DataPointer(reinterpret_cast<const void*>(_data + offset), [](const void*) { });
+        return reinterpret_cast<const void*>(_data + offset);
     }
 
     void write(const void* data, int64_t offset, int64_t length) override
@@ -78,10 +78,10 @@ public:
         _mmap.open(file_path);
     }
 
-    DataPointer read(int64_t offset, int64_t length) override
+    const void* read(int64_t offset, int64_t length) override
     {
         assert(offset + length <= _mmap.get_size());
-        return DataPointer(reinterpret_cast<const void*>(reinterpret_cast<const uint8_t*>(_mmap.get_data()) + offset), [](const void*) { });
+        return reinterpret_cast<const void*>(reinterpret_cast<const uint8_t*>(_mmap.get_data()) + offset);
     }
 
     void write(const void* data, int64_t offset, int64_t length) override
@@ -122,20 +122,26 @@ public:
         _size = _fp.tellg();
     }
 
-    DataPointer read(int64_t offset, int64_t length) override
+    const void* read(int64_t offset, int64_t length) override
     {
         assert(offset + length <= _size);
-        std::lock_guard<std::mutex> lock(_m);
-        void* buffer = malloc(length);
-        _fp.seekg(offset);
-        _fp.read(static_cast<char*>(buffer), length);
-        return DataPointer(buffer, [](const void* p) { free(const_cast<void*>(p)); });
+
+        int64_t oft = offset - _buffer_pos;
+        if (oft < 0 || (_buffer_size - oft) < length)
+        {
+            _fp.seekg(offset);
+            _buffer_size = std::min<int64_t>(sizeof(_buffer), _size - offset);
+            _fp.read(_buffer, _buffer_size);
+            _buffer_pos = offset;
+            oft = 0;
+        }
+
+        return reinterpret_cast<const void*>(&_buffer[oft]);
     }
 
     void write(const void* data, int64_t offset, int64_t length) override
     {
         assert(offset + length <= _size);
-        std::lock_guard<std::mutex> lock(_m);
         _fp.seekp(offset);
         _fp.write((char*)data, length);
     }
@@ -146,7 +152,9 @@ public:
 protected:
     std::fstream _fp;
     int64_t _size = 0;
-    std::mutex _m{};
+    char _buffer[50 * 1024 * 1024]{};
+    int64_t _buffer_pos = 0;
+    int64_t _buffer_size = 0;
 };
 
 }

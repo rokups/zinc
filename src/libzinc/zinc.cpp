@@ -92,6 +92,7 @@ std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_
     }
 #if ZINC_NO_MMAP
     auto* file = new File(file_path, File::Read);
+    max_threads = 1;
 #else
     auto* file = new MemoryMappedFile(file_path);
 #endif
@@ -134,6 +135,7 @@ std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const char* file_path, si
     }
 #if ZINC_NO_MMAP
     auto* file = new File(file_path, File::Read);
+    max_threads = 1;
 #else
     auto* file = new MemoryMappedFile(file_path);
 #endif
@@ -188,7 +190,7 @@ bool patch_file(IFile* file, size_t block_size, DeltaMap& delta,
         {
             ByteArrayRef block{};
             block.data.resize(block_size, 0);
-            memcpy(&block.data.front(), file->read(cacheable.local_offset, block_size).get(), block_size);
+            memcpy(&block.data.front(), file->read(cacheable.local_offset, block_size), block_size);
             block_cache[cacheable.local_offset] = std::move(block);
             zinc_log("% 4d offset +cache refcount=1", cacheable.local_offset);
         }
@@ -326,7 +328,7 @@ bool patch_file(IFile* file, size_t block_size, DeltaMap& delta,
                 else
                 {   // Copy block from later file position
                     auto block = file->read(de->local_offset, block_size);
-                    file->write(block.get(), de->block_offset, block_size);
+                    file->write(block, de->block_offset, block_size);
                     zinc_log("% 4d offset using file data offset %d", de->block_offset, de->local_offset);
                     // Delete handled block from reference cache lookup table if it exists there. This prevents handled
                     // blocks form getting cached as that cached data would not be needed any more.

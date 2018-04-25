@@ -23,9 +23,9 @@
  */
 #pragma once
 
-
-#include "ThreadPool.h"
+#include <atomic>
 #include <chrono>
+#include <thread>
 #include "File.hpp"
 
 
@@ -41,15 +41,15 @@ protected:
     std::atomic<int64_t> _bytes_done;
     std::atomic<bool> _cancel;
     size_t _thread_count = 0;
-    ThreadPool _pool;
+    std::vector<std::thread> _pool;
     T _result;
+    std::mutex _lock_result;
 
 public:
     Task(IFile* file, size_t thread_count)
         : _file(file)
         , _bytes_total(file->get_size())
         , _thread_count(thread_count)
-        , _pool(thread_count)
     {
         _cancel.store(false);
         _bytes_done.store(0);
@@ -90,10 +90,9 @@ public:
 
     Task<T>* wait() override
     {
-        using namespace std::chrono_literals;
-
-        while (!is_done())
-            std::this_thread::sleep_for(300ms);
+        for (auto& t : _pool)
+            t.join();
+        _pool.clear();
 
         return this;
     }

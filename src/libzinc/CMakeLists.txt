@@ -63,7 +63,7 @@ endif ()
 if (ZINC_NO_MMAP)
     target_compile_definitions(libzinc PUBLIC -DZINC_NO_MMAP=1)
 endif ()
-target_link_libraries(libzinc flat_hash_map Threadpool pthread)
+target_link_libraries(libzinc flat_hash_map ${CMAKE_THREAD_LIBS_INIT})
 
 message("ZINC_WITH_LOGGING:           ${ZINC_WITH_LOGGING}")
 message("ZINC_WITH_ADDRESS_SANITIZER: ${ZINC_WITH_ADDRESS_SANITIZER}")

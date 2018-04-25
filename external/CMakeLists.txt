@@ -37,6 +37,3 @@ target_include_directories(CLI11 INTERFACE CLI11)
 
 add_library(Catch INTERFACE)
 target_include_directories(Catch INTERFACE Catch)
-
-add_library(Threadpool INTERFACE)
-target_include_directories(Threadpool INTERFACE Threadpool)

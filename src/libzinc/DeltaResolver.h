@@ -27,7 +27,6 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
-#include <ThreadPool.h>
 #include "mmap/FileMemoryMap.h"
 #include "zinc/zinc.h"
 #include "hashmaps.h"
