@@ -97,8 +97,6 @@ void DeltaResolver::queue_tasks()
 
 void DeltaResolver::process(int64_t start_index, int64_t block_length)
 {
-    block_length = std::min(_bytes_total - start_index, block_length);                 // Make sure we do not
-    // go out of bounds.
 #if ZINC_USE_SKA_FLAT_HASH_MAP
     ska::flat_hash_map<int64_t, StrongHash> local_hash_cache;
         local_hash_cache.reserve(_bytes_total / _block_size + 1);
