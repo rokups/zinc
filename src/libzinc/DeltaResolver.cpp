@@ -119,7 +119,6 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
     RollingChecksum weak;
     WeakHash last_failed_weak = 0;
     int64_t bytes_consumed = 0;
-    bool last_failed = false;
     const auto last_local_hash_check_offset = _bytes_total - _block_size;
     uint8_t prev_block_first_byte = 0;
 
@@ -155,7 +154,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
         prev_block_first_byte = *(uint8_t*)block;
 
         WeakHash weak_digest = weak.digest();
-        if (last_failed && last_failed_weak == weak_digest)
+        if (last_failed_weak == weak_digest)
         {
             // Corner-case optimization for repeating data patterns. For example if old file contained a huge blob of
             // null bytes and new file contains weak hash collision but not not region with same null bytes then
@@ -172,8 +171,9 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
             auto jt = it->second.find(strong);
             if (jt != it->second.end())
             {
-                if (last_failed)
-                    last_failed = false;
+                // Block was found. Set last_failed_weak to something improbable so that
+                // `last_failed_weak == weak_digest` check above will most likely fail.
+                last_failed_weak = weak_digest * 16777619U;
 
                 int64_t this_block_index = jt->second;
                 auto block_offset = this_block_index * _block_size;
@@ -209,16 +209,10 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                 weak.clear();
             }
             else
-            {
-                last_failed = true;
                 last_failed_weak = weak_digest;
-            }
         }
         else
-        {
-            last_failed = true;
             last_failed_weak = weak_digest;
-        }
     }
 
     // Ensure all bytes are reported.
