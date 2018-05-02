@@ -84,10 +84,9 @@ void DeltaResolver::queue_tasks()
         }
     }
 
-    // Queue threads
-    int64_t thread_chunk_size = 10 * 1024 * 1024;
-    auto total_thread_count = _bytes_total / thread_chunk_size + 1;
-    for (size_t i = 0; i < total_thread_count; i++)
+    // Queue threads. Minimal chunk size is 10M. Small amounts of data will not use all requested processing threads.
+    int64_t thread_chunk_size = std::max<int64_t>(10 * 1024 * 1024, _bytes_total / _thread_count);
+    for (size_t i = 0; i < _thread_count; i++)
     {
         auto start = thread_chunk_size * i;
         auto length = std::min<int64_t>(thread_chunk_size, _bytes_total - (thread_chunk_size * i));
