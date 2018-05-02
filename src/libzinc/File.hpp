@@ -44,26 +44,26 @@ public:
 class Buffer : public IFile
 {
 public:
-    explicit Buffer(void* data, int64_t dlen)
+    inline explicit Buffer(void* data, int64_t dlen)
         : _data(reinterpret_cast<uint8_t*>(data))
         , _size(dlen)
     {
     }
 
-    const void* read(int64_t offset, int64_t length) override
+    inline const void* read(int64_t offset, int64_t length) override
     {
         assert(offset + length <= _size);
         return reinterpret_cast<const void*>(_data + offset);
     }
 
-    void write(const void* data, int64_t offset, int64_t length) override
+    inline void write(const void* data, int64_t offset, int64_t length) override
     {
         assert(offset + length <= _size);
         memmove((uint8_t*)_data + offset, data, length);
     }
 
-    bool is_valid() override { return _data != nullptr && _size > 0; }
-    int64_t get_size() override { return _size; }
+    inline bool is_valid() override { return _data != nullptr && _size > 0; }
+    inline int64_t get_size() override { return _size; }
 
 protected:
     uint8_t* _data = nullptr;
@@ -73,25 +73,25 @@ protected:
 class MemoryMappedFile : public IFile
 {
 public:
-    explicit MemoryMappedFile(const char* file_path)
+    inline explicit MemoryMappedFile(const char* file_path)
     {
         _mmap.open(file_path);
     }
 
-    const void* read(int64_t offset, int64_t length) override
+    inline const void* read(int64_t offset, int64_t length) override
     {
         assert(offset + length <= _mmap.get_size());
         return reinterpret_cast<const void*>(reinterpret_cast<const uint8_t*>(_mmap.get_data()) + offset);
     }
 
-    void write(const void* data, int64_t offset, int64_t length) override
+    inline void write(const void* data, int64_t offset, int64_t length) override
     {
         assert(offset + length <= _mmap.get_size());
         memmove((uint8_t*)_mmap.get_data() + offset, data, length);
     }
 
-    bool is_valid() override { return _mmap.is_open(); }
-    int64_t get_size() override { return _mmap.get_size(); }
+    inline bool is_valid() override { return _mmap.is_open(); }
+    inline int64_t get_size() override { return _mmap.get_size(); }
 
 protected:
     FileMemoryMap _mmap;
@@ -107,7 +107,7 @@ public:
         ReadWrite = Read | Write
     };
 
-    explicit File(const char* file_path, Flags flags)
+    inline explicit File(const char* file_path, Flags flags)
     {
         auto streamFlags = std::ios_base::binary | std::ios_base::ate;
         if (flags & Read)
@@ -122,7 +122,7 @@ public:
         _size = _fp.tellg();
     }
 
-    const void* read(int64_t offset, int64_t length) override
+    inline const void* read(int64_t offset, int64_t length) override
     {
         assert(offset + length <= _size);
 
@@ -139,15 +139,15 @@ public:
         return reinterpret_cast<const void*>(&_buffer[oft]);
     }
 
-    void write(const void* data, int64_t offset, int64_t length) override
+    inline void write(const void* data, int64_t offset, int64_t length) override
     {
         assert(offset + length <= _size);
         _fp.seekp(offset);
         _fp.write((char*)data, length);
     }
 
-    bool is_valid() override { return _fp.is_open(); }
-    int64_t get_size() override { return _size; }
+    inline bool is_valid() override { return _fp.is_open(); }
+    inline int64_t get_size() override { return _size; }
 
 protected:
     std::fstream _fp;
