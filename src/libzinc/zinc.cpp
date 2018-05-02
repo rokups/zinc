@@ -212,7 +212,7 @@ bool patch_file(IFile* file, size_t block_size, DeltaMap& delta,
         {
             // Handle blocks which have data cached first so cache can be cleared up.
             auto index = priority_index.back();
-            if (index >= delta.map.size())
+            if (index >= static_cast<signed>(delta.map.size()))
             {
                 // This block was already handled normally.
                 priority_index.pop_back();
@@ -253,7 +253,7 @@ bool patch_file(IFile* file, size_t block_size, DeltaMap& delta,
                     {
                         auto& cacheable = *it;
                         // Make sure block requires data from position that overlaps with current block.
-                        if (llabs(cacheable.local_offset - de->block_offset) < block_size)
+                        if (llabs(cacheable.local_offset - de->block_offset) < static_cast<signed>(block_size))
                         {
                             if (cached_blocks > 0)
                                 cache_block(cacheable);
@@ -302,7 +302,7 @@ bool patch_file(IFile* file, size_t block_size, DeltaMap& delta,
                     // Other identical blocks will copy data from just downloaded sibling.
                     for (int64_t sibling_index : identical_blocks_it->second)
                     {
-                        if (sibling_index < delta.map.size())
+                        if (sibling_index < static_cast<signed>(delta.map.size()))
                             delta.map[sibling_index].local_offset = de->block_offset;
                     }
                 }
@@ -413,4 +413,4 @@ bool patch_file(const char* file_path, int64_t file_final_size, size_t block_siz
     return false;
 }
 
-};
+}

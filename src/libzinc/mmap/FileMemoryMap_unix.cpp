@@ -51,7 +51,7 @@ bool FileMemoryMap::open(const char* file_path)
 
     _size = st.st_size;
 
-    _data = mmap(0, _size, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
+    _data = mmap(nullptr, static_cast<size_t>(_size), PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
     if (!is_open())
     {
         zinc_error<std::system_error>("FileMapping could not get map file data.", errno);
@@ -66,8 +66,8 @@ void FileMemoryMap::close()
 {
     if (is_open())
     {
-        munmap(_data, _size);
-        _data = 0;
+        munmap(_data, static_cast<size_t>(_size));
+        _data = nullptr;
     }
 
     if (_fd != -1)

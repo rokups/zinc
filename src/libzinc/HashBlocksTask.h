@@ -22,7 +22,7 @@ public:
     ~HashBlocksTask() override = default;
 
 protected:
-    size_t _block_size = 0;
+    int64_t _block_size = 0;
 
     /// Queues tasks to threadpool for processing blocks.
     void queue_tasks();

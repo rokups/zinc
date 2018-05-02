@@ -187,4 +187,4 @@ bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap&
 bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
                 const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());
 
-};
+}

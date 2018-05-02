@@ -33,7 +33,7 @@ class RollingChecksum
     size_t _count;
 
 public:
-    inline RollingChecksum(const void* data = 0, size_t dlen = 0)
+    inline RollingChecksum(const void* data = nullptr, size_t dlen = 0)
         : _a(0), _b(0), _count(0)
     {
         update(data, dlen);
@@ -44,7 +44,7 @@ public:
         if (!data || !dlen)
             return;
         _count = dlen;
-        uint8_t* d = (uint8_t*)data;
+        const uint8_t* d = (const uint8_t*)data;
         for (size_t i = 0; i < dlen; i++)
         {
             auto byte = d[i];

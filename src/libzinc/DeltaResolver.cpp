@@ -32,9 +32,9 @@ namespace zinc
 
 DeltaResolver::DeltaResolver(IFile* file, size_t block_size,
                              const RemoteFileHashList& hashes, size_t thread_count)
-    : _hashes(&hashes)
+    : Task<DeltaMap>(file, thread_count)
+    , _hashes(&hashes)
     , _block_size(block_size)
-    , Task<DeltaMap>(file, thread_count)
 {
     assert(file != nullptr);
     assert(block_size > 0);
@@ -57,7 +57,7 @@ void DeltaResolver::queue_tasks()
 #endif
 
     _result.map.reserve(_hashes->size());
-    for (int64_t block_index = 0; block_index < _hashes->size(); block_index++)
+    for (int64_t block_index = 0; block_index < static_cast<signed>(_hashes->size()); block_index++)
         _result.map.emplace_back(DeltaElement{block_index, block_index * _block_size});
 
     {
@@ -91,7 +91,7 @@ void DeltaResolver::queue_tasks()
         auto start = thread_chunk_size * i;
         auto length = std::min<int64_t>(thread_chunk_size, _bytes_total - (thread_chunk_size * i));
         if (length > 0)
-            _pool.emplace_back(std::move(std::thread(std::bind(&DeltaResolver::process, this, start, length))));
+            _pool.emplace_back(std::thread(std::bind(&DeltaResolver::process, this, start, length)));
     }
 }
 
@@ -147,7 +147,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
         {
             ++w_start_oft;
             block = _file->read(w_start_oft, current_block_size);
-            weak.rotate(prev_block_first_byte, *((uint8_t*)block + (current_block_size - 1)));
+            weak.rotate(prev_block_first_byte, *((const uint8_t*)block + (current_block_size - 1)));
 
             if ((w_start_oft % block_size) == 0)
             {
@@ -156,7 +156,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                     return;
             }
         }
-        prev_block_first_byte = *(uint8_t*)block;
+        prev_block_first_byte = *(const uint8_t*)block;
 
         WeakHash weak_digest = weak.digest();
         if (last_failed_weak == weak_digest)

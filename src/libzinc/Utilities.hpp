@@ -49,4 +49,4 @@ std::string bytes_to_string(const T& container)
     return bytes_to_string(&container.front(), container.size());
 }
 
-};
+}

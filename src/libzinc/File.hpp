@@ -59,7 +59,7 @@ public:
     inline void write(const void* data, int64_t offset, int64_t length) override
     {
         assert(offset + length <= _size);
-        memmove((uint8_t*)_data + offset, data, length);
+        memmove(_data + offset, data, static_cast<size_t>(length));
     }
 
     inline bool is_valid() override { return _data != nullptr && _size > 0; }
@@ -87,7 +87,7 @@ public:
     inline void write(const void* data, int64_t offset, int64_t length) override
     {
         assert(offset + length <= _mmap.get_size());
-        memmove((uint8_t*)_mmap.get_data() + offset, data, length);
+        memmove((uint8_t*)_mmap.get_data() + offset, data, static_cast<size_t>(length));
     }
 
     inline bool is_valid() override { return _mmap.is_open(); }
@@ -143,7 +143,7 @@ public:
     {
         assert(offset + length <= _size);
         _fp.seekp(offset);
-        _fp.write((char*)data, length);
+        _fp.write((const char*)data, length);
     }
 
     inline bool is_valid() override { return _fp.is_open(); }

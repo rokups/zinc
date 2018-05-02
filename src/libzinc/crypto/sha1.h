@@ -78,7 +78,7 @@ typedef struct sha1_ctxt SHA1_CTX;
 
 #define SHA1_RESULTLEN  (160/8)
 #ifdef __cplusplus
-};
+}
 #endif
 
 #endif   /* _NETINET6_SHA1_H_ */

@@ -45,6 +45,7 @@ inline void zinc_log(const char* format, ...)
 
 template<typename T> inline void zinc_error(const char* message, int error=0)
 {
+    ((void)error);
 #if ZINC_WITH_EXCEPTIONS
     throw T(message);
 #else

@@ -26,8 +26,8 @@
 
 
 zinc::HashBlocksTask::HashBlocksTask(IFile* file, size_t block_size, size_t thread_count)
-    : _block_size(block_size)
-    , Task(file, thread_count)
+    : Task(file, thread_count)
+    , _block_size(block_size)
 {
     queue_tasks();
 }
@@ -41,22 +41,22 @@ void zinc::HashBlocksTask::queue_tasks()
     _result.resize(block_count);
 
     auto i = 0;
-    auto blocks_per_thread = std::max<size_t>(block_count / _thread_count + 1, 1);
+    auto blocks_per_thread = std::max<int64_t>(block_count / _thread_count + 1, 1);
     for (; block_count >= blocks_per_thread; i++)
     {
-        _pool.emplace_back(std::move(std::thread(std::bind(&HashBlocksTask::process, this, i * blocks_per_thread, blocks_per_thread))));
+        _pool.emplace_back(std::thread(std::bind(&HashBlocksTask::process, this, i * blocks_per_thread, blocks_per_thread)));
         block_count -= blocks_per_thread;
     }
 
     // Last thread may get less blocks to process.
     if (block_count > 0)
-        _pool.emplace_back(std::move(std::thread(std::bind(&HashBlocksTask::process, this, i * blocks_per_thread, block_count))));
+        _pool.emplace_back(std::thread(std::bind(&HashBlocksTask::process, this, i * blocks_per_thread, block_count)));
 }
 
 void zinc::HashBlocksTask::process(size_t block_start, size_t block_count)
 {
 
-    int64_t fp_offset = block_start * _block_size;
+    int64_t fp_offset = block_start * static_cast<int64_t>(_block_size);
 
     // Pre-process last possibly incomplete block first.
     {
