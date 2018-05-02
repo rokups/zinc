@@ -119,6 +119,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
     auto last_progress_report_offset = w_start_oft;
     const auto last_local_hash_check_offset = _bytes_total - _block_size;
     const auto last_offset = w_start_oft + block_length;
+    const auto block_size = _block_size;
     uint8_t prev_block_first_byte = 0;
 
     auto report_progress = [&]() {
@@ -126,9 +127,11 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
         last_progress_report_offset = w_start_oft;
     };
 
-    for (; w_start_oft < last_offset;)
+    for (;;)
     {
-        auto current_block_size = (size_t)std::min<int64_t>(_block_size, last_offset - w_start_oft);
+        auto current_block_size = (size_t)std::min<int64_t>(block_size, last_offset - w_start_oft);
+        if (current_block_size == 0)
+            break;
         const void* block = nullptr;
         if (weak.isEmpty())
         {
@@ -146,7 +149,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
             block = _file->read(w_start_oft, current_block_size);
             weak.rotate(prev_block_first_byte, *((uint8_t*)block + (current_block_size - 1)));
 
-            if ((w_start_oft % _block_size) == 0)
+            if ((w_start_oft % block_size) == 0)
             {
                 report_progress();
                 if (_cancel.load(std::memory_order_relaxed))
@@ -178,7 +181,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                 last_failed_weak = weak_digest * 16777619U;
 
                 int64_t this_block_index = jt->second;
-                auto block_offset = this_block_index * _block_size;
+                auto block_offset = this_block_index * block_size;
 
                 // In some cases current block may contain identical data with some later blocks. However these
                 // later blocks may already have correct data present. This check avoids moving data between blocks
@@ -189,8 +192,8 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                     bool is_identical;
                     if (lh_it == local_hash_cache.end())
                     {
-                        auto this_block = _file->read(block_offset, _block_size);
-                        StrongHash local_hash = strong_hash(this_block, static_cast<size_t>(_block_size));
+                        auto this_block = _file->read(block_offset, block_size);
+                        StrongHash local_hash = strong_hash(this_block, static_cast<size_t>(block_size));
                         local_hash_cache[block_offset] = local_hash;
                         is_identical = local_hash == strong;
                     }
