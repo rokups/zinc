@@ -97,8 +97,8 @@ void DeltaResolver::queue_tasks()
 
 void DeltaResolver::process(int64_t start_index, int64_t block_length)
 {
-    int64_t last_offset = start_index + std::min(_bytes_total - start_index, block_length);   // Make sure we do not
-                                                                                              // go out of bounds.
+    block_length = std::min(_bytes_total - start_index, block_length);                 // Make sure we do not
+    // go out of bounds.
 #if ZINC_USE_SKA_FLAT_HASH_MAP
     ska::flat_hash_map<int64_t, StrongHash> local_hash_cache;
         local_hash_cache.reserve(_bytes_total / _block_size + 1);
@@ -108,7 +108,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
 
     // `- block_size` at the end compensates for w_start being increased on the first pass when weak checksum is
     // empty. Checksum is always empty on the first pass.
-    int64_t w_start_oft = start_index;
+    int64_t w_start_oft = start_index - _block_size;
     if (start_index >= _block_size)
     {
         // `- block_size + 1` adjusts starting pointer so that we start consuming bytes in specified block from the
@@ -118,49 +118,50 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
     }
     RollingChecksum weak;
     WeakHash last_failed_weak = 0;
-    int64_t last_progress_report = 0;
+    int64_t bytes_consumed = 0;
+    bool last_failed = false;
     const auto last_local_hash_check_offset = _bytes_total - _block_size;
     uint8_t prev_block_first_byte = 0;
 
-    auto report_progress = [&]() {
-        // Progress is reported once per consumed block
-        _bytes_done.fetch_add(w_start_oft - last_progress_report, std::memory_order_relaxed);
-        last_progress_report = w_start_oft;
-    };
-
-    for (;w_start_oft < last_offset;)
+    for (; block_length > 0;)
     {
-        auto current_block_size = (size_t)std::min<int64_t>(_block_size, last_offset - w_start_oft);
-        auto* block = _file->read(w_start_oft, current_block_size);
+        // Progress reporting.
+        if (bytes_consumed >= _block_size)
+        {
+            _bytes_done += bytes_consumed;
+            bytes_consumed = 0;
+            if (_cancel.load())
+                return;
+        }
+
+        auto current_block_size = (size_t)std::min<int64_t>(_block_size, block_length);
+        const void* block = nullptr;
         if (weak.isEmpty())
         {
+            w_start_oft += current_block_size;
+            bytes_consumed += current_block_size;
+            block_length -= current_block_size;
+            block = _file->read(w_start_oft, current_block_size);
             weak.update(block, current_block_size);
-            report_progress();
-            if (_cancel.load(std::memory_order_relaxed))
-                return;
         }
         else
         {
-            weak.rotate(prev_block_first_byte, *((uint8_t*) block + (current_block_size - 1)));
-            if ((w_start_oft % _block_size) == 0)
-            {
-                report_progress();
-                if (_cancel.load(std::memory_order_relaxed))
-                    return;
-            }
+            bytes_consumed += 1;
+            block_length -= 1;
+            ++w_start_oft;
+            block = _file->read(w_start_oft, current_block_size);
+            weak.rotate(prev_block_first_byte, *((uint8_t*)block + (current_block_size - 1)));
         }
-
         prev_block_first_byte = *(uint8_t*)block;
 
         WeakHash weak_digest = weak.digest();
-        if (last_failed_weak == weak_digest)
+        if (last_failed && last_failed_weak == weak_digest)
         {
             // Corner-case optimization for repeating data patterns. For example if old file contained a huge blob of
             // null bytes and new file contains weak hash collision but not not region with same null bytes then
             // algorithm would continue computing strong hashes shifting one byte at a time and fail to find a match.
             // We cache value of last failed weak hash if it's strong hash lookup fails. If next weak hash is same as
             // the last - entire region is skipped. This greatly improves speed in some cases.
-            ++w_start_oft;
             continue;
         }
 
@@ -171,11 +172,10 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
             auto jt = it->second.find(strong);
             if (jt != it->second.end())
             {
-                // Block was found. Set last_failed_weak to something improbable so that
-                // `last_failed_weak == weak_digest` check above will most likely fail.
-                last_failed_weak = weak_digest * 16777619U;
+                if (last_failed)
+                    last_failed = false;
 
-                auto this_block_index = jt->second;
+                int64_t this_block_index = jt->second;
                 auto block_offset = this_block_index * _block_size;
 
                 // In some cases current block may contain identical data with some later blocks. However these
@@ -188,7 +188,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                     if (lh_it == local_hash_cache.end())
                     {
                         auto this_block = _file->read(block_offset, _block_size);
-                        auto local_hash = strong_hash(this_block, static_cast<size_t>(_block_size));
+                        StrongHash local_hash = strong_hash(this_block, static_cast<size_t>(_block_size));
                         local_hash_cache[block_offset] = local_hash;
                         is_identical = local_hash == strong;
                     }
@@ -200,30 +200,29 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                         // Block at `this_block_index` contains identical data as currently inspected block. No need
                         // to update that block.
                         weak.clear();
-                        w_start_oft += current_block_size;
                         continue;
                     }
                 }
 
-                {
-                    std::lock_guard<std::mutex> lock(_lock_result);
-                    _result.map[this_block_index].local_offset = w_start_oft;
-                }
+                std::lock_guard<std::mutex> lock(_lock_result);
+                _result.map[this_block_index].local_offset = w_start_oft;
                 weak.clear();
-                w_start_oft += current_block_size;
-                continue;
             }
             else
+            {
+                last_failed = true;
                 last_failed_weak = weak_digest;
+            }
         }
         else
+        {
+            last_failed = true;
             last_failed_weak = weak_digest;
-
-        ++w_start_oft;
+        }
     }
 
     // Ensure all bytes are reported.
-    report_progress();
+    _bytes_done += bytes_consumed;
 }
 
 DeltaMap& DeltaResolver::result()
