@@ -118,38 +118,43 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
     }
     RollingChecksum weak;
     WeakHash last_failed_weak = 0;
-    int64_t bytes_consumed = 0;
+    auto last_progress_report_offset = w_start_oft;
     const auto last_local_hash_check_offset = _bytes_total - _block_size;
     uint8_t prev_block_first_byte = 0;
 
+    auto report_progress = [&]() {
+        _bytes_done += w_start_oft - last_progress_report_offset;
+        last_progress_report_offset = w_start_oft;
+    };
+
     for (; block_length > 0;)
     {
-        // Progress reporting.
-        if (bytes_consumed >= _block_size)
-        {
-            _bytes_done += bytes_consumed;
-            bytes_consumed = 0;
-            if (_cancel.load())
-                return;
-        }
-
         auto current_block_size = (size_t)std::min<int64_t>(_block_size, block_length);
         const void* block = nullptr;
         if (weak.isEmpty())
         {
             w_start_oft += current_block_size;
-            bytes_consumed += current_block_size;
             block_length -= current_block_size;
             block = _file->read(w_start_oft, current_block_size);
             weak.update(block, current_block_size);
+
+            report_progress();
+            if (_cancel.load(std::memory_order_relaxed))
+                return;
         }
         else
         {
-            bytes_consumed += 1;
             block_length -= 1;
             ++w_start_oft;
             block = _file->read(w_start_oft, current_block_size);
             weak.rotate(prev_block_first_byte, *((uint8_t*)block + (current_block_size - 1)));
+
+            if ((w_start_oft % _block_size) == 0)
+            {
+                report_progress();
+                if (_cancel.load(std::memory_order_relaxed))
+                    return;
+            }
         }
         prev_block_first_byte = *(uint8_t*)block;
 
@@ -216,7 +221,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
     }
 
     // Ensure all bytes are reported.
-    _bytes_done += bytes_consumed;
+    report_progress();
 }
 
 DeltaMap& DeltaResolver::result()
