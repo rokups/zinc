@@ -124,11 +124,13 @@ std::string pretty_print_size(int64_t bytes)
 int main(int argc, char* argv[])
 {
     bool hash_file = false;
+    bool test_mode = false;
     std::string input_file;
     std::string output_file;
 
     CLI::App parser{"File synchronization utility."};
     parser.add_flag("--hash", hash_file, "Build file hashes instead of synchronizing files.");
+    parser.add_flag("--test", test_mode, "Test mode. No files will be written.");
     parser.add_option("input", input_file, "Input file.")->check(CLI::ExistingFile);
     parser.add_option("output", output_file, "Output file.");
 
@@ -169,24 +171,28 @@ int main(int argc, char* argv[])
                 std::this_thread::sleep_for(150ms);
                 bar.update(checksums_task->progress(), checksums_task->is_done());
             } while (!checksums_task->is_done());
+            checksums_task->wait();
 
-            json output;
-            output["file_size"] = file_size;
-            output["block_size"] = block_size;
-            output["blocks"] = {};
-            for (const auto& h: checksums_task->result())
-                output["blocks"].push_back(json::array({h.weak, zinc::bytes_to_string(h.strong)}));
+            if (!test_mode)
+            {
+                json output;
+                output["file_size"] = file_size;
+                output["block_size"] = block_size;
+                output["blocks"] = {};
+                for (const auto& h: checksums_task->result())
+                    output["blocks"].push_back(json::array({h.weak, zinc::bytes_to_string(h.strong)}));
 
-            if (FILE* fp = fopen(output_file.c_str(), "w+b"))
-            {
-                auto result = output.dump(4);
-                fwrite(result.c_str(), 1, result.length(), fp);
-                fclose(fp);
-            }
-            else
-            {
-                std::cerr << "Could not open '" << output_file << "' for writing.\n";
-                return -1;
+                if (FILE* fp = fopen(output_file.c_str(), "w+b"))
+                {
+                    auto result = output.dump(4);
+                    fwrite(result.c_str(), 1, result.length(), fp);
+                    fclose(fp);
+                }
+                else
+                {
+                    std::cerr << "Could not open '" << output_file << "' for writing.\n";
+                    return -1;
+                }
             }
         }
         else
@@ -214,7 +220,7 @@ int main(int argc, char* argv[])
                 std::this_thread::sleep_for(150ms);
                 bar.update(delta_task->progress(), delta_task->is_done());
             } while (!delta_task->is_done());
-            auto delta = delta_task->result();
+            auto delta = delta_task->wait()->result();
 
             int64_t bytes_moved = 0;
             int64_t bytes_downloaded = 0;
@@ -230,10 +236,14 @@ int main(int argc, char* argv[])
             std::cout << "Downloaded bytes: " << pretty_print_size(bytes_downloaded) << std::endl;
             std::cout << "Matched bytes:    " << pretty_print_size(file_size - bytes_downloaded - bytes_moved) << std::endl;
 
-            FileReader reader(input_file);
-            bar = ProgressBar("Patching file    ");
-            if (!zinc::patch_file(output_file.c_str(), file_size, block_size, delta, std::bind(&FileReader::get_data, &reader, _1, _2), progress_report))
-                std::cerr << "Patching file failed due to unknown error.";
+            if (!test_mode)
+            {
+                FileReader reader(input_file);
+                bar = ProgressBar("Patching file    ");
+                if (!zinc::patch_file(output_file.c_str(), file_size, block_size, delta,
+                    std::bind(&FileReader::get_data, &reader, _1, _2), progress_report))
+                    std::cerr << "Patching file failed due to unknown error.";
+            }
         }
     }
     catch (std::invalid_argument& e)
