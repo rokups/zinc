@@ -118,6 +118,7 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
     WeakHash last_failed_weak = 0;
     auto last_progress_report_offset = w_start_oft;
     const auto last_local_hash_check_offset = _bytes_total - _block_size;
+    const auto last_offset = w_start_oft + block_length;
     uint8_t prev_block_first_byte = 0;
 
     auto report_progress = [&]() {
@@ -125,14 +126,13 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
         last_progress_report_offset = w_start_oft;
     };
 
-    for (; block_length > 0;)
+    for (; w_start_oft < last_offset;)
     {
-        auto current_block_size = (size_t)std::min<int64_t>(_block_size, block_length);
+        auto current_block_size = (size_t)std::min<int64_t>(_block_size, last_offset - w_start_oft);
         const void* block = nullptr;
         if (weak.isEmpty())
         {
             w_start_oft += current_block_size;
-            block_length -= current_block_size;
             block = _file->read(w_start_oft, current_block_size);
             weak.update(block, current_block_size);
 
@@ -142,7 +142,6 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
         }
         else
         {
-            block_length -= 1;
             ++w_start_oft;
             block = _file->read(w_start_oft, current_block_size);
             weak.rotate(prev_block_first_byte, *((uint8_t*)block + (current_block_size - 1)));
