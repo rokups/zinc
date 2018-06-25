@@ -209,9 +209,9 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
                     }
                 }
 
+                weak.clear();
                 std::lock_guard<std::mutex> lock(_lock_result);
                 _result.map[this_block_index].local_offset = w_start_oft;
-                weak.clear();
             }
             else
                 last_failed_weak = weak_digest;
@@ -222,17 +222,6 @@ void DeltaResolver::process(int64_t start_index, int64_t block_length)
 
     // Ensure all bytes are reported.
     report_progress();
-}
-
-DeltaMap& DeltaResolver::result()
-{
-    // TODO: Fix this ugly workaround.
-    // When task is done resolving deltas it keeps file mapping open. This prevents file patching function opening a new
-    // file mapping if task object is not destroyed yet. By closing mapping here we allow user to dispose of task object
-    // whenever it is convenient, like when object goes out of scope, after patching the file.
-    if (success())
-        _mapping.close();
-    return _result;
 }
 
 }

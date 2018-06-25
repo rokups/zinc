@@ -44,8 +44,6 @@ public:
 
     ~DeltaResolver() override = default;
 
-    DeltaMap& result() override;
-
 protected:
     FileMemoryMap _mapping;
     const RemoteFileHashList* _hashes;

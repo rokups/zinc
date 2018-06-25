@@ -80,6 +80,8 @@ public:
 
     T& result() override
     {
+        delete _file;
+        _file = nullptr;
         return _result;
     }
 
