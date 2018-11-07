@@ -1,7 +1,7 @@
-/**
+/*
  * MIT License
  *
- * Copyright (c) 2017 Rokas Kupstys
+ * Copyright (c) 2018 Rokas Kupstys
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,396 +21,471 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#include "zinc/zinc.h"
-#include <cstring>
-#include <cassert>
-#include <cstring>
-#include <algorithm>
+#if _WIN32
+#   include <windows.h>
+#else
+#   include <sys/stat.h>
+#   include <unistd.h>
+#endif
 #include <unordered_map>
-#include <unordered_set>
-#include "mmap/FileMemoryMap.h"
-#include "zinc_error.hpp"
-#include "Utilities.hpp"
-#include "DeltaResolver.h"
-#include "HashBlocksTask.h"
+#include <algorithm>
+#include "zinc/zinc.h"
+
+using namespace zinc::detail;
 
 namespace zinc
 {
 
-struct ByteArrayRef
+using ByteArray = std::vector<uint8_t>;
+
+const Parameters default_parameters{};
+
+struct Range
 {
-    size_t refcount = 1;
-    ByteArray data;
+    int64_t start;
+    int64_t length;
 };
 
-inline bool is_download(DeltaElement& de)
+/// Tracks progress reporting when range of bytes needs to be processed multiple times.
+struct DividedProgress
 {
-    return de.local_offset == -1;
-}
+    int64_t bytes_total = 0;
+    std::atomic<int64_t> bytes_buffer{0};
+    std::atomic<int64_t>* bytes_done;
+    unsigned times = 0;
 
-inline bool is_done(DeltaElement& de)
-{
-    return de.block_offset == de.local_offset;
-}
-
-inline bool is_copy(DeltaElement& de)
-{
-    return de.local_offset >= 0 && !is_done(de);
-}
-
-inline bool is_valid(DeltaElement& de)
-{
-    return de.block_index >= 0 && de.block_offset >= 0;
-}
-
-inline bool operator==(const DeltaElement& a, const DeltaElement& b)
-{
-    return a.block_index == b.block_index && a.block_offset == b.block_offset && a.local_offset == b.local_offset;
-}
-
-std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const void* file_data, int64_t file_size,
-                                                               size_t block_size, size_t max_threads)
-{
-    RemoteFileHashList hashes;
-    if (file_data == nullptr || file_size == 0 || block_size == 0)
+    DividedProgress(int64_t bytes_total_, unsigned times_, std::atomic<int64_t>* progress_result)
+        : bytes_total(bytes_total_)
+        , bytes_done(progress_result)
+        , times(times_)
     {
-        zinc_error<std::invalid_argument>("file_data, file_size and block_size must be positive numbers.");
-        return std::unique_ptr<HashBlocksTask>{};
     }
-    return std::make_unique<HashBlocksTask>(new Buffer(const_cast<void*>(file_data), file_size), block_size,
-        max_threads);
+
+    /// After consuming `bytes` * `times` amount of bytes, bytes_done() will return `bytes`.
+    inline void consume(int64_t bytes)
+    {
+        if (bytes_done == nullptr)
+            return;
+
+        bytes += bytes_buffer.exchange(0);
+        bytes_buffer.fetch_add(bytes % times);
+        bytes_done->fetch_add(bytes / times);
+    }
+
+    inline void flush()
+    {
+        if (bytes_done == nullptr)
+            return;
+
+        bytes_done->fetch_add(bytes_buffer);
+        bytes_buffer = 0;
+    }
+};
+
+int64_t get_file_size(FILE* file)
+{
+    if (!file)
+        return 0;
+
+    auto pos = ftell(file);
+    fseek(file, 0, SEEK_END);
+
+    auto result = ftell(file);
+    fseek(file, pos, SEEK_SET);
+
+    return result;
 }
 
-std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_path, size_t block_size,
-                                                               size_t max_threads)
+FILE* duplicate_file(FILE* file, const char* access)
 {
-    RemoteFileHashList hashes;
-    if (file_path == nullptr || block_size == 0)
-    {
-        zinc_error<std::invalid_argument>("file_path and block_size must not be null.");
-        return std::unique_ptr<HashBlocksTask>{};
-    }
-#if ZINC_NO_MMAP
-    auto* file = new File(file_path, File::Read);
-    max_threads = 1;
+#if __linux__
+    auto fd = fileno(file);
+    char link[32];
+    snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+
+    file = fopen(link, access);
+#elif _WIN32
+#   error TODO
 #else
-    auto* file = new MemoryMappedFile(file_path);
+#   error TODO later
 #endif
-    return std::make_unique<HashBlocksTask>(file, block_size, max_threads);
+    return file;
 }
 
-std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
-                                                       const RemoteFileHashList& hashes, size_t max_threads)
+/// Partition data_length into part_count number of strips. First strip may be longer than the others.
+std::vector<Range> partition_data(size_t part_count, int64_t data_length, int64_t min_part_length = 1)
 {
-    if ((file_size % block_size) != 0)
-    {
-        zinc_error<std::invalid_argument>("file_size must be multiple of block_size.");
-        return std::unique_ptr<DeltaResolver>{};
-    }
+    std::vector<Range> result;
 
-    if (file_data == nullptr)
-    {
-        zinc_log("File is not present, delta equals to full download.");
-        return std::unique_ptr<DeltaResolver>{};
-    }
+    if (data_length < static_cast<int64_t>(part_count))
+        part_count = static_cast<size_t>(data_length);
 
-    return std::make_unique<DeltaResolver>(new Buffer(const_cast<void*>(file_data), file_size), block_size, hashes, max_threads);
+    int64_t avg_length = std::max<int64_t>(data_length / part_count, min_part_length);
+    result.reserve(part_count);
+
+    auto prev_offset = 0L;
+    while (part_count > 0)
+    {
+        part_count--;
+        auto length = data_length - prev_offset;
+        if (part_count > 0)
+            length = std::min(length, avg_length);
+        if (length == 0)
+            break;
+        result.emplace_back(Range{.start = prev_offset, .length = length});
+        prev_offset += length;
+    }
+    return result;
 }
 
-std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const char* file_path, size_t block_size,
-                                                       const RemoteFileHashList& hashes, size_t max_threads)
-{
-    auto file_size = get_file_size(file_path);
-    int64_t truncate_to;
-    if (file_size > 0)
-        truncate_to = round_up_to_multiple(file_size, block_size);
-    else
-        truncate_to = block_size * hashes.size();
+//////////////////////////////////////////////// file partitioning /////////////////////////////////////////////////////
 
-    auto err = truncate(file_path, truncate_to);
-    if (err != 0)
+BoundaryList partition_file_worker(FILE* file, int64_t start_offset, int64_t length, DividedProgress& progress,
+    std::atomic<bool>* cancel, const Parameters* parameters)
+{
+    BoundaryList result;
+    if (!file)
+        return result;
+
+    FILE* task_file = duplicate_file(file, "rb");
+    if (task_file != nullptr)
+        file = task_file;
+
+    std::vector<uint8_t> buffer;
+    buffer.resize(parameters->read_buffer_size);
+    auto sz = buffer.size();
+    (void)(sz);
+
+    const auto mask = (1U << parameters->match_bits) - 1U;
+    auto buffer_size = std::min<int64_t>(length, parameters->read_buffer_size);
+
+    fseek(file, start_offset, SEEK_SET);
+    int64_t read = fread(&buffer[0], 1, static_cast<size_t>(buffer_size), file);
+    if (read != buffer_size)
     {
-        zinc_error<std::system_error>("Could not truncate file_path to required size.", err);
-        return std::unique_ptr<DeltaResolver>{};
+        fclose(file);
+        return result;
     }
-#if ZINC_NO_MMAP
-    auto* file = new File(file_path, File::Read);
-    max_threads = 1;
-#else
-    auto* file = new MemoryMappedFile(file_path);
-#endif
-    return std::make_unique<DeltaResolver>(file, block_size, hashes, max_threads);
+
+    auto* data = &buffer[0];
+    auto* data_start = data;
+    auto window_length = parameters->window_length;
+    auto fingerprint = buzhash(data, window_length);
+
+    do
+    {
+        for (auto* end = data_start + buffer_size - window_length; data < end;)
+        {
+            if ((fingerprint & mask) == 0)
+            {
+                auto block_start = start_offset + (data - data_start);
+                result.emplace_back(Boundary{.start = block_start, .fingerprint = fingerprint, .hash = 0, .length = 0});
+            }
+
+            fingerprint = buzhash_update(fingerprint, data[0], data[window_length], window_length);
+            data++;
+        }
+
+        auto bytes_consumed = buffer_size - window_length;
+
+        progress.consume(bytes_consumed);
+
+        length -= bytes_consumed;
+        start_offset += bytes_consumed;
+
+        if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
+        {
+            fclose(file);
+            return {};
+        }
+
+        buffer_size = std::min<int64_t>(length, parameters->read_buffer_size);
+        fseek(file, start_offset, SEEK_SET);
+        read = fread(&buffer[0], 1, static_cast<size_t>(buffer_size), file);
+        if (read != buffer_size)
+        {
+            fclose(file);
+            return {};
+        }
+        data = data_start;
+    } while (length > window_length);
+
+    progress.consume(length);
+
+    if (task_file != nullptr)
+        fclose(task_file);
+
+    return result;
 }
 
-bool patch_file(IFile* file, size_t block_size, DeltaMap& delta,
-                const FetchBlockCallback& get_data, const ProgressCallback& report_progress)
+bool compute_hashes_worker(FILE* file, BoundaryList& result, int64_t item_start, int64_t item_count,
+    std::atomic<bool>* cancel, DividedProgress& progress)
 {
-    auto file_size = file->get_size();
-
-    if ((file_size % block_size) != 0)
-    {
-        zinc_error<std::invalid_argument>("File data must be multiple of a block size.");
+    if (!file)
         return false;
+
+    FILE* task_file = duplicate_file(file, "rb");
+    if (task_file != nullptr)
+        file = task_file;
+
+    std::vector<uint8_t> buffer;
+    for (auto i = item_start, end = item_start + item_count; i < end; i++)
+    {
+        auto& block = result[i];
+        fseek(file, block.start, SEEK_SET);
+        if (buffer.size() < static_cast<size_t>(block.length))
+            buffer.resize(static_cast<size_t>(block.length));
+
+        auto len = fread(&buffer[0], 1, static_cast<size_t>(block.length), file);
+        block.hash = fnv64a(&buffer[0], len);
+        progress.consume(block.length);
+        if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
+        {
+            fclose(file);
+            return false;
+        }
     }
 
-    if (file_size < 1)
-    {
-        zinc_error<std::invalid_argument>("file_size must be a positive number.");
-        return false;
-    }
-
-    // Reference cache maps block index to a list of other blocks that are very likely to use data at specified index.
-    std::vector<std::vector<DeltaElement>> ref_cache((unsigned int)(file_size / block_size));
-    {
-        size_t block_index = 0;
-        for (auto& delta_element : delta.map)
-        {
-            // Only keep record of elements that require data from other parts of the file. Anything else is irrelevant.
-            if (is_copy(delta_element))
-                ref_cache[delta_element.local_offset / block_size].push_back(delta_element);
-            block_index++;
-        }
-    }
-    // Block cache is a temporary storage for blocks that will be required elsewhere in the file but are about to be
-    // overwritten.
-#if ZINC_USE_SKA_FLAT_HASH_MAP
-    ska::flat_hash_map<int64_t, ByteArrayRef> block_cache;
-    block_cache.reserve(std::max((size_t)10, delta.map.size() / 10));
-#else
-    std::unordered_map<int64_t, ByteArrayRef> block_cache;
-#endif
-
-    std::vector<int64_t> priority_index;
-    priority_index.reserve(64);
-
-    auto cache_block = [&](DeltaElement& cacheable)
-    {
-        auto block_cache_it = block_cache.find(cacheable.local_offset);
-        if (block_cache_it == block_cache.end())
-        {
-            ByteArrayRef block{};
-            block.data.resize(block_size, 0);
-            memcpy(&block.data.front(), file->read(cacheable.local_offset, block_size), block_size);
-            block_cache[cacheable.local_offset] = std::move(block);
-            zinc_log("% 4d offset +cache refcount=1", cacheable.local_offset);
-        }
-        else
-        {
-            ByteArrayRef &cached_block = (*block_cache_it).second;
-            cached_block.refcount++;
-            zinc_log("% 4d offset +cache refcount=%d", cacheable.local_offset, cached_block.refcount);
-        }
-        // Prioritize cached blocks so we can evict data from cache as soon as possible.
-        priority_index.push_back(cacheable.block_index);
-    };
-
-    while (!delta.is_empty())
-    {
-        DeltaElement* de = nullptr;
-        bool priority_block = !priority_index.empty();
-        if (priority_block)
-        {
-            // Handle blocks which have data cached first so cache can be cleared up.
-            auto index = priority_index.back();
-            if (index >= static_cast<signed>(delta.map.size()))
-            {
-                // This block was already handled normally.
-                priority_index.pop_back();
-                continue;
-            }
-            de = &delta.map[index];
-            priority_index.pop_back();
-        }
-        else
-        {
-            // Handle blocks normally, walking from the back of the file.
-            de = &delta.map.back();
-            if (!is_valid(*de))
-            {
-                // This block was already handled.
-                delta.map.pop_back();
-                continue;
-            }
-        }
-
-        // Correct data is already in place.
-        if (!is_done(*de))
-        {
-            // Cache data if writing current block overwrites data needed by any other blocks.
-            {
-                DeltaElement maybe_cache;
-                size_t cached_blocks = 0;
-
-                // Check three clusters of cacheable blocks. Blocks in these clusters have a chance to overlap with
-                // current position we are about to write. If any block overlaps with current block - data required for
-                // that block will be cached.
-                for (auto check_index = std::max<int64_t>(de->block_index - 1, 0),
-                          end_index = std::min<int64_t>(de->block_index + 2, ref_cache.size());
-                     check_index < end_index; check_index++)
-                {
-                    auto& subcache = ref_cache[check_index];
-                    for (auto it = subcache.begin(); it != subcache.end();)
-                    {
-                        auto& cacheable = *it;
-                        // Make sure block requires data from position that overlaps with current block.
-                        if (llabs(cacheable.local_offset - de->block_offset) < static_cast<signed>(block_size))
-                        {
-                            if (cached_blocks > 0)
-                                cache_block(cacheable);
-                            else
-                            {
-                                // Defer caching of very first element. Read below for explanation.
-                                maybe_cache = cacheable;
-                            }
-                            cached_blocks++;
-                            it = subcache.erase(it);
-                        }
-                        else
-                            it++;
-                    }
-                }
-
-                if (cached_blocks == 1 && maybe_cache.block_index == de->block_index)
-                {
-                    // If we have only one block to cache and it's block index matches current one - we can be sure that
-                    // moving data will not corrupt anything therefore we avoid block caching. On this loop iteration
-                    // data will be moved into proper place. If this check was not present then block would be cached
-                    // and then immediately removed from cache on the same iteration. It would be a pointless extra
-                    // copying of memory.
-                }
-                else if (cached_blocks > 0)
-                {
-                    assert(is_valid(maybe_cache));
-                    cache_block(maybe_cache);
-                }
-            }
-
-            if (is_download(*de))
-            {
-                // Here we are pretty sure we do not already have the data. If old file already had the data then delta
-                // resolution would already have de->local_offset set and this branch would not be executed. If there
-                // are more than one identical block then first block gets downloaded through this branch and all of
-                // it's siblings get their local offset set here so download will not be carried out for the identical
-                // block of data again.
-                zinc_log("% 4d offset download", de->block_offset);
-                auto data = get_data(de->block_index, block_size);
-                file->write(&data.front(), de->block_offset, data.size());
-
-                auto identical_blocks_it = delta.identical_blocks.find(de->block_index);
-                if (identical_blocks_it != delta.identical_blocks.end())
-                {
-                    // Other identical blocks will copy data from just downloaded sibling.
-                    for (int64_t sibling_index : identical_blocks_it->second)
-                    {
-                        if (sibling_index < static_cast<signed>(delta.map.size()))
-                            delta.map[sibling_index].local_offset = de->block_offset;
-                    }
-                }
-            }
-            else
-            {
-                auto it_cache = block_cache.find(de->local_offset);
-                if (it_cache != block_cache.end())
-                {   // Use cached block if it exists
-                    ByteArrayRef& cached_block = it_cache->second;
-                    cached_block.refcount--;
-
-                    file->write(&cached_block.data.front(), de->block_offset, cached_block.data.size());
-                    zinc_log("% 4d offset using cached offset %d", de->block_offset, de->local_offset);
-
-                    // Remove block from cache only if delta map does not reference block later
-                    if (cached_block.refcount == 0)
-                    {
-                        block_cache.erase(it_cache);
-                        zinc_log("% 4d offset -cache", de->local_offset);
-                    }
-                }
-                else
-                {   // Copy block from later file position
-                    auto block = file->read(de->local_offset, block_size);
-                    file->write(block, de->block_offset, block_size);
-                    zinc_log("% 4d offset using file data offset %d", de->block_offset, de->local_offset);
-                    // Delete handled block from reference cache lookup table if it exists there. This prevents handled
-                    // blocks form getting cached as that cached data would not be needed any more.
-                    auto& subcache = ref_cache[de->local_offset / block_size];
-                    auto it = std::find(subcache.begin(), subcache.end(), *de);
-                    if (it != subcache.end())
-                        subcache.erase(it);
-                }
-            }
-        }
-
-        if (priority_block)
-            de->block_index = -1;                // Mark block as invalid so it is not handled twice in this loop.
-        else
-            delta.map.pop_back();
-
-        if (report_progress)
-        {
-            if (!report_progress(block_size, file_size - delta.map.size() * block_size, file_size))
-            {
-                zinc_log("User interrupted patch_file().");
-                return false;
-            }
-        }
-    }
+    if (task_file != nullptr)
+        fclose(task_file);
 
     return true;
 }
 
-bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
-    const FetchBlockCallback& get_data, const ProgressCallback& report_progress)
+BoundaryList partition_file_task(FILE* file, size_t max_threads, std::atomic<int64_t>* bytes_done,
+    std::atomic<bool>* cancel, const Parameters* parameters)
 {
-    auto file = std::make_unique<Buffer>(file_data, file_size);
-    return patch_file(file.get(), block_size, delta, get_data, report_progress);
+    if (max_threads == 0)
+        max_threads = std::thread::hardware_concurrency();
+    max_threads = std::max<size_t>(max_threads, 1);
+
+    if (!file)
+        return {};
+
+    auto file_size = get_file_size(file);
+    BoundaryList result;
+    result.resize(1);                                               // File start always contains a fake split point.
+
+    DividedProgress progress(file_size, 2, bytes_done);             // Will process file twice
+
+    // Partition file
+    {
+        std::vector<std::future<BoundaryList>> tasks;
+        for (auto range : partition_data(max_threads, file_size, parameters->window_length))
+        {
+            tasks.emplace_back(std::async(std::launch::async, &partition_file_worker, file,
+                range.start, range.length, std::ref(progress), cancel, parameters));
+        }
+
+        // Gather worker results
+        for (auto& task : tasks)
+        {
+            auto task_result = task.get();
+            result.insert(result.end(), task_result.begin(), task_result.end());
+        }
+    }
+
+    if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
+        return result;
+
+    // Ensuring block sizes happens here in a single thread in order to ensure consistent results no matter how many
+    // worker threads were used.
+    if (result.size() > 1)
+    {
+        // Remove blocks that are too small
+        auto next_offset = file_size;
+        for (auto it = result.rbegin(); it != result.rend(); it++)
+        {
+            auto& split = *it;
+            if (next_offset - split.start < parameters->min_block_size)
+                result.erase((it + 1).base());
+            next_offset = split.start;
+        }
+    }
+
+    // Split big blocks into smaller ones
+    auto prev_offset = 0L;
+    std::vector<uint8_t> buffer;
+    buffer.resize(parameters->window_length);
+
+    for (auto it = result.begin(); it != result.end(); it++)
+    {
+        auto& split = *it;
+        auto block_size = split.start - prev_offset;
+        prev_offset = split.start;
+        if (block_size > parameters->max_block_size)
+        {
+            auto new_blocks_count = block_size / parameters->max_block_size;
+            auto new_block_size = block_size / (new_blocks_count + 1);
+            BoundaryList splits;
+
+            for (auto i = 1L; i < new_blocks_count + 1; i++)
+            {
+                auto start = split.start - (i * new_block_size);
+                fseek(file, start, SEEK_SET);
+                auto len = fread(&buffer[0], 1, parameters->window_length, file);
+                auto fingerprint = buzhash(&buffer[0], static_cast<uint32_t>(len));
+                splits.emplace_back(Boundary{.start = start, .fingerprint = fingerprint, .hash = 0, .length = 0});
+            }
+
+            it = result.insert(it, splits.rbegin(), splits.rend()) + splits.size();
+        }
+    }
+
+    // Finalize fake split point
+    {
+        auto first_block_size = result.size() > 1 ? result[1].start : file_size;
+        if (buffer.size() < static_cast<size_t>(first_block_size))
+            buffer.resize(static_cast<unsigned long>(first_block_size));
+
+        result[0] = Boundary{.start = 0, .fingerprint = 0, .hash = 0, .length = 0};
+
+        fseek(file, 0, SEEK_SET);
+        auto len = fread(&buffer[0], 1, parameters->window_length, file);
+        result[0].fingerprint = buzhash(&buffer[0], static_cast<uint32_t>(len));
+
+        fseek(file, 0, SEEK_SET);
+        len = fread(&buffer[0], 1, static_cast<size_t>(first_block_size), file);
+        result[0].hash = fnv64a(&buffer[0], len);
+    }
+
+    // Calculate block lengths
+    for (size_t i = 0, end = result.size(); i < end; i++)
+    {
+        auto& block = result[i];
+        auto next_block_start = i + 1 < result.size() ? result[i + 1].start : file_size;
+        block.length = next_block_start - block.start;
+    }
+
+    // Calculate strong hashes for blocks
+    std::vector<std::future<bool>> tasks;
+    for (auto range : partition_data(max_threads, result.size()))
+    {
+        tasks.emplace_back(std::async(std::launch::async, &compute_hashes_worker, file, std::ref(result),
+            range.start, range.length, cancel, std::ref(progress)));
+    }
+
+    // Finish hashing tasks
+    for (auto& task : tasks)
+        task.get();
+
+    progress.flush();
+
+    return result;
 }
 
-bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
-                const FetchBlockCallback& get_data, const ProgressCallback& report_progress)
+std::future<BoundaryList> partition_file(FILE* file, size_t max_threads, std::atomic<int64_t>* bytes_done,
+    int64_t* bytes_to_process, std::atomic<bool>* cancel, const Parameters* parameters)
 {
-    if (file_final_size <= 0)
+    if (bytes_done != nullptr)
+        bytes_done->exchange(0);
+
+    if (parameters == nullptr)
+        parameters = &default_parameters;
+
+    if (bytes_to_process != nullptr)
+        *bytes_to_process = get_file_size(file);
+
+    return std::async(std::launch::async, &partition_file_task, file, max_threads, bytes_done, cancel, parameters);
+}
+
+//////////////////////////////////////////////// file comparison ///////////////////////////////////////////////////////
+
+std::unordered_map<int64_t, std::vector<const Boundary*>> create_boundary_lookup_table(const BoundaryList& boundary_list)
+{
+    std::unordered_map<int64_t, std::vector<const Boundary*>> result;
+    for (const auto& boundary : boundary_list)
+        result[boundary.hash].emplace_back(&boundary);
+    return result;
+}
+
+bool intersects(const Boundary& a, const Boundary& b)
+{
+    auto a_end = a.start + a.length;
+    auto b_end = b.start + b.length;
+    return (b.start <= a.start && a.start < b_end) || (a.start <= b.start && b.start < a_end);
+}
+
+SyncOperationList compare_files(const BoundaryList& local_file, const BoundaryList& remote_file)
+{
+    SyncOperationList result;
+    result.reserve(remote_file.size());
+
+    auto local_file_table = create_boundary_lookup_table(local_file);
+
+    // Iterate remote file and produce instructions to reassemble remote file from pieces available locally.
+    for (const auto& block : remote_file)
     {
-        zinc_error<std::invalid_argument>("file_final_size must be positive number.");
-        return false;
-    }
-
-    auto file_size = get_file_size(file_path);
-    if (file_size < 0)
-    {
-        touch(file_path);
-        file_size = 0;
-    }
-
-    // Local file must be at least as big as remote file and it must be padded to size multiple of block_size.
-    auto max_required_size = std::max<int64_t>(block_size * delta.map.size(), round_up_to_multiple(file_size, block_size));
-    auto err = truncate(file_path, max_required_size);
-    if (err != 0)
-    {
-        zinc_error<std::system_error>("Could not truncate file_path to required size.", err);
-        return false;
-    }
-
-#if ZINC_NO_MMAP
-    auto file = std::make_unique<File>(file_path, File::ReadWrite);
-#else
-    auto file = std::make_unique<MemoryMappedFile>(file_path);
-#endif
-
-    if (patch_file(file.get(), block_size, delta, get_data, report_progress))
-    {
-        file = nullptr;
-
-        err = truncate(file_path, file_final_size);
-        if (err != 0)
+        enum Status
         {
-            zinc_error<std::system_error>("Could not truncate file_path to file_final_size.", err);
-            return false;
+            NotFound,               // Block is not present in local file
+            Copied,                 // Block is present in local file and can be copied
+            Present,                // Block is present in local file at required location, no action needed
+        } status = NotFound;
+
+        auto it_local_blocks = local_file_table.find(block.hash);
+        if (it_local_blocks != local_file_table.end())
+        {
+            const Boundary* found = nullptr;
+            for (const auto& local_block : it_local_blocks->second)
+            {
+                if (local_block->fingerprint == block.fingerprint && local_block->hash == block.hash && local_block->length == block.length)
+                {
+                    // Block was found in local file
+                    if (local_block->start != block.start)
+                    {
+                        // Block was moved
+                        found = local_block;
+                        status = Copied;
+                    }
+                    else
+                    {
+                        // Exactly same block at required position exists in a local file. No need to do anything.
+                        status = Present;
+                        break;
+                    }
+                }
+            }
+
+            if (status == Copied)
+                result.emplace_back(SyncOperation{.remote = &block, .local = found});
         }
-        return true;
+
+        if (status == NotFound)
+        {
+            // Block does not exist in local file. Download.
+            result.emplace_back(SyncOperation{.remote = &block, .local = nullptr});
+        }
     }
 
-    zinc_error<std::runtime_error>("Unknown error.");
-    return false;
+    // Sort operations list
+    for (auto i = 0UL; i < result.size(); i++)
+    {
+        for (auto j = i + 1; j < result.size(); j++)
+        {
+            auto& a = result[i];
+            auto& b = result[j];
+
+            // Solve circular dependencies, two blocks depending on each other's local data.
+            if (a.local != nullptr && b.local != nullptr)
+            {
+                if (intersects(*a.remote, *b.local) && intersects(*b.remote, *a.local))
+                {
+                    // Force next block download
+                    b.local = nullptr;
+                }
+            }
+
+            // Make blocks with local source come before blocks that write to local source position
+            if (b.local != nullptr && intersects(*a.remote, *b.local))
+            {
+                result.insert(result.begin() + i, b);
+                result.erase(result.begin() + j + 1);
+            }
+        }
+    }
+
+    return result;
 }
 
 }

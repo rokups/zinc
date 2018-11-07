@@ -21,11 +21,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
+add_compile_options(-Wall -Wextra -Wshadow -Werror)
+
 add_subdirectory(libzinc)
-if (ZINC_WITH_PYTHON)
-    add_subdirectory(pyzinc)
-endif ()
 add_subdirectory(zinc)
-if (NOT WIN32)
-    add_subdirectory(fuzzer)
-endif ()

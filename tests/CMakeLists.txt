@@ -21,11 +21,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-file(GLOB TEST_SRCS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} test_*.cpp)
+file(GLOB TEST_SRCS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} test-*.cpp)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests)
 foreach (test_source_file ${TEST_SRCS})
     get_filename_component (test_name ${test_source_file} NAME_WE)
-    add_executable (${test_name} ${test_source_file} common.h common.cpp)
+    add_executable (${test_name} ${test_source_file})
     target_link_libraries (${test_name} libzinc Catch -lstdc++)
     add_test(
         NAME ${test_name}

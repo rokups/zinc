@@ -22,18 +22,11 @@
 # SOFTWARE.
 #
 
-if (ZINC_WITH_PYTHON)
-    add_subdirectory(pybind11)
-endif ()
-
-add_library(flat_hash_map INTERFACE)
-target_include_directories(flat_hash_map INTERFACE flat_hash_map)
-
 add_library(json INTERFACE)
-target_include_directories(json INTERFACE json)
+target_include_directories(json SYSTEM INTERFACE json)
 
 add_library(CLI11 INTERFACE)
-target_include_directories(CLI11 INTERFACE CLI11)
+target_include_directories(CLI11 SYSTEM INTERFACE CLI11)
 
 add_library(Catch INTERFACE)
-target_include_directories(Catch INTERFACE Catch)
+target_include_directories(Catch SYSTEM INTERFACE Catch)

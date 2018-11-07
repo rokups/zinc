@@ -21,6 +21,5 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-file(GLOB_RECURSE SOURCE_FILES *.cpp *.h)
-add_executable(zinc ${SOURCE_FILES})
+add_executable(zinc zinc.cpp)
 target_link_libraries(zinc libzinc json CLI11)

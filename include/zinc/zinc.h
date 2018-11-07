@@ -1,7 +1,7 @@
-/**
+/*
  * MIT License
  *
- * Copyright (c) 2017 Rokas Kupstys
+ * Copyright (c) 2018 Rokas Kupstys
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,167 +24,79 @@
 #pragma once
 
 
+#include <atomic>
 #include <cstdint>
-#include <functional>
-#include <memory>
-#include <set>
+#include <future>
 #include <vector>
-#include <unordered_map>
-#if !_WIN32
-#    include <unistd.h>
-#endif
 
 
 namespace zinc
 {
 
-#if ZINC_WITH_STRONG_HASH_FNV
-#   define ZINC_STRONG_HASH_SIZE 8
-#else
-#   define ZINC_STRONG_HASH_SIZE 20
-#endif
-
-using WeakHash = uint32_t;
-using StrongHash = std::array<uint8_t, ZINC_STRONG_HASH_SIZE>;
-
-struct BlockHashes
+/// Descriptor of chunk boundary.
+struct Boundary
 {
-    WeakHash weak{};
-    StrongHash strong{};
+    /// Chunk start.
+    int64_t start;
+    /// Chunk fingerprint which is buzhash checksum of first `Parameters::window_length` bytes.
+    uint64_t fingerprint;
+    /// fnv64a hash of entire chunk.
+    uint64_t hash;
+    /// Length of the chunk.
+    int64_t length;
+};
+using BoundaryList = std::vector<Boundary>;
+
+/// Descriptor of sync operation.
+struct SyncOperation
+{
+    /// A remote block information. Destination in new local file.
+    const Boundary* remote;
+    /// A local block information. Source in local file when data exists. May be null, in which case block does not exist locally.
+    const Boundary* local;
+};
+using SyncOperationList = std::vector<SyncOperation>;
+
+/// Parameters for chunking algorithm and progress reporting.
+struct Parameters
+{
+    /// Window size for buzhash algorithm. Fingerprint is buzhash(&block_start, window_length).
+    unsigned window_length = 4095;
+    /// Blocks size less than specified here will be removed.
+    unsigned min_block_size = 512 * 1024;
+    /// Blocks with size more than specified here will be split into smaller blocks of equal size.
+    unsigned max_block_size = 8 * 1024 * 1024;
+    /// Number of bits checked by rolling hash. Increasing this number will increase average block size and vice versa.
+    unsigned match_bits = 21;
+    /// Buffer size used when reading file from disk.
+    size_t read_buffer_size = 10 * 1024 * 1024;
 };
 
-struct DeltaElement
+/// Partition file into blocks.
+/// \param file input.
+/// \param max_threads number of threads to use. Passing 0 will use as many threads as there are CPU cores.
+/// \param bytes_done optional output parameter for monitoring operation progress.
+/// \param bytes_to_process optional output parameter returning number of bytes that will be processed. Operation is finished when bytes_done == bytes_to_process.
+/// \param cancel set to true when async operation should be terminated prematurely.
+/// \param parameters for chunking algorithm. Do not use unless you know what you are doing.
+/// \return a list of boundaries.
+std::future<BoundaryList> partition_file(FILE* file, size_t max_threads = 0, std::atomic<int64_t>* bytes_done = nullptr,
+    int64_t* bytes_to_process = nullptr, std::atomic<bool>* cancel = nullptr, const Parameters* parameters = nullptr);
+
+/// Compare file blocks and produce delta operations list.
+/// \param local_file a BoundaryList produced from local (old) file.
+/// \param remote_file a BoundaryList produced from remote (new) file.
+/// \return a list of delta sync operations.
+SyncOperationList compare_files(const BoundaryList& local_file, const BoundaryList& remote_file);
+
+namespace detail
 {
-    int64_t block_index = -1;
-    int64_t block_offset = -1;
-    int64_t local_offset = -1;
-};
-
-typedef std::vector<uint8_t>                                                                     ByteArray;
-/// Strong and weak hashes for each block.
-typedef std::vector<BlockHashes>                                                                 RemoteFileHashList;
-/// A callback that should obtain block data at specified index and return it.
-typedef std::function<ByteArray(int64_t block_index, size_t block_size)>                         FetchBlockCallback;
-/// A callback for reporting progress. Return true if patching should continue, false if patching should terminate.
-typedef std::function<bool(int64_t bytes_done_now, int64_t bytes_done_total, int64_t file_size)> ProgressCallback;
-
-struct DeltaMap
-{
-    /// A list of offsets of currenty present data in not yet updated file. -1 value signifies a missing block.
-    std::vector<DeltaElement> map;
-    /// Groups of block indexes whose content is identical. Used to avoid downloading same content multiple times.
-    std::unordered_map<int64_t, std::set<int64_t>> identical_blocks;
-    /// Return true if delta map is empty.
-    bool is_empty() const { return map.empty(); }
-};
-
-template<typename T>
-class ITask
-{
-public:
-    virtual ~ITask() = default;
-    /// Returns progress percent value (0-100).
-    virtual float progress() const = 0;
-    /// Returns `true` if task has finished execution or was cancelled.
-    virtual bool is_done() const = 0;
-    /// Returns result of the task.
-    virtual T& result() = 0;
-    /// Cancel task.
-    virtual void cancel() = 0;
-    /// Returns true if task finished processing data successfully and was not cancelled.
-    virtual bool success() const = 0;
-    /// Block until task succeeds or fails and return.
-    virtual ITask<T>* wait() = 0;
-    /// Return total number of bytes task is processing.
-    virtual int64_t size_total() = 0;
-    /// Return number of bytes task has processed already.
-    virtual int64_t size_done() = 0;
-};
-
-/*!
- * Calculates strong and weak checksums for every block in the passed memory.
- * \param file_data a pointer to a memory block.
- * \param file_size size of \a file_data memory block. It must be multiple of \a block_size.
- * \param block_size size of single block.
- * \param max_threads a max number of threads used for processing.
- * \return incomplete task which later yields array of \a BlockHashes which contains weak and strong checksums of every
- * block in the file.
- * \throws std::invalid_argument
- * \throws std::system_error
- */
-std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const void* file_data, int64_t file_size,
-                                                               size_t block_size, size_t max_threads);
-/*!
- * Calculates strong and weak checksums for every block in the passed file.
- * \param file_path a path to a file.
- * \param block_size size of single block.
- * \param max_threads a max number of threads used for processing.
- * \return incomplete task which later yields array of \a BlockHashes which contains weak and strong checksums of every
- * block in the file.
- * \throws std::invalid_argument
- * \throws std::system_error
- */
-std::unique_ptr<ITask<RemoteFileHashList>> get_block_checksums(const char* file_path, size_t block_size,
-                                                               size_t max_threads);
-
-/*!
- * Calculates a delta map defining which blocks of data are to be reused from local files and which are to be downloaded.
- * \param file_data a pointer to a memory block.
- * \param file_size size of \a file_data memory block. It must be multiple of \a block_size.
- * \param block_size size of single block.
- * \param hashes \a RemoteFileHashList returned by \a get_block_checksums.
- * \param max_threads a max number of threads used for processing.
- * \return incomplete task which later yields DeltaMap describing how data should be reused from local file and which
- * blocks should be downloaded.
- * \throws std::invalid_argument
- * \throws std::system_error
- */
-std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const void* file_data, int64_t file_size, size_t block_size,
-                                                       const RemoteFileHashList& hashes, size_t max_threads);
-/*!
- * Calculates a delta map defining which blocks of data are to be reused from local files and which are to be downloaded.
- * \param file_path a path to a file.
- * \param block_size size of single block.
- * \param hashes \a RemoteFileHashList returned by \a get_block_checksums.
- * \param max_threads a max number of threads used for processing.
- * \return incomplete task which later yields DeltaMap describing how data should be reused from local file and which
- * blocks should be downloaded.
- * \throws std::invalid_argument
- * \throws std::system_error
- */
-std::unique_ptr<ITask<DeltaMap>> get_differences_delta(const char* file_path, size_t block_size,
-                                                       const RemoteFileHashList& hashes, size_t max_threads);
-
-/// `file_data` must be at least as big as remote data block.
-/*!
- * Sync a local file to remote one.
- * \param file_data a memory block with a local file. It must be big enough to contain latest version of file.
- * \param file_size size of \a file_data memory block. It must be multiple of \a block_size.
- * \param block_size size of single block.
- * \param delta \a DeltaMap returned by \a get_differences_delta.
- * \param get_data a callback which should return \a block_size size block of data from remote file at
- * block_index * \a block_size position.
- * \param report_progress a callback which will be invoked to report progress.
- * \return if file update was successful.
- * \throws std::invalid_argument
- * \throws std::system_error
- */
-bool patch_file(void* file_data, int64_t file_size, size_t block_size, DeltaMap& delta,
-                const FetchBlockCallback& get_data, const ProgressCallback& report_progress = nullptr);
-/*!
- * Sync a local file to remote one.
- * \param file_path a path to a file.
- * \param file_final_size size of a remote file. \a file_path will be truncated to this size at the end.
- * \param block_size size of single block.
- * \param delta \a DeltaMap returned by \a get_differences_delta.
- * \param get_data a callback which should return \a block_size size block of data from remote file at
- * block_index * \a block_size position.
- * \param report_progress a callback which will be invoked to report progress.
- * \return if file update was successful.
- * \throws std::invalid_argument
- * \throws std::system_error
- */
-bool patch_file(const char* file_path, int64_t file_final_size, size_t block_size, DeltaMap& delta,
-                const FetchBlockCallback& get_data, const ProgressCallback& report_progress = ProgressCallback());
+/// Compute a rolling hash on a block of memory.
+uint32_t buzhash(const uint8_t* data, uint32_t len);
+/// Roll one byte out and one byte in.
+uint32_t buzhash_update(uint32_t sum, uint8_t remove, uint8_t add, uint32_t len);
+/// Compute strong hash.
+uint64_t fnv64a(const uint8_t* data, size_t length, uint64_t hash = 14695981039346656037UL);
+}
 
 }

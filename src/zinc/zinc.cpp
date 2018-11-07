@@ -1,7 +1,7 @@
-/**
+/*
  * MIT License
  *
- * Copyright (c) 2017 Rokas Kupstys
+ * Copyright (c) 2018 Rokas Kupstys
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,241 +21,259 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#include <functional>
-#include <thread>
-#include <chrono>
 #include <zinc/zinc.h>
 #include <json.hpp>
 #include <CLI11.hpp>
-#include <utility>
-#include "../libzinc/Utilities.hpp"
+#if !_WIN32
+#   include <unistd.h>
+#endif
 
-using namespace nlohmann;
-using namespace std::placeholders;
-using namespace std::chrono_literals;
+using json = nlohmann::json;
 
-class ProgressBar
+#if _WIN32
+#include <windows.h>
+std::wstring to_wstring(const std::string &str)
 {
-public:
-    ProgressBar() = default;
-    explicit ProgressBar(std::string message)
-        : _message(std::move(message))
+    std::wstring result;
+    auto needed = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), str.length(), 0, 0);
+    if (needed > 0)
     {
+        result.resize(needed);
+        MultiByteToWideChar(CP_UTF8, 0, str.c_str(), str.length(), &result.front(), needed);
+    }
+    return result;
+}
+
+int truncate(const char *file_path, int64_t file_size)
+{
+    std::wstring wfile_path = to_wstring(file_path);
+    std::replace(wfile_path.begin(), wfile_path.end(), '/', '\\');
+    HANDLE hFile = CreateFileW(wfile_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    if (!hFile || hFile == INVALID_HANDLE_VALUE)
+        return (int)GetLastError();
+
+    LARGE_INTEGER distance;
+    distance.QuadPart = file_size;
+    if (!SetFilePointerEx(hFile, distance, 0, FILE_BEGIN))
+    {
+        CloseHandle(hFile);
+        return INVALID_SET_FILE_POINTER;
     }
 
-    void update(double done_percent, bool done)
+    if (!SetEndOfFile(hFile))
     {
-        printf("%s : [", _message.c_str());
-        for (auto i = 0; i < (done_percent / 2); i++)
-            printf("#");
-        for (auto i = 0; i < 50 - (done_percent / 2); i++)
-            printf(" ");
-
-        printf("] %.2f", (float)done_percent);
-
-        if (done)
-            printf("\n");
-        else
-            printf("\r");
-
-        fflush(stdout);
+        auto error = GetLastError();
+        CloseHandle(hFile);
+        return (int)error;
     }
 
-protected:
-    std::string _message;
-};
+    CloseHandle(hFile);
+    return ERROR_SUCCESS;
+}
+#endif
 
-class FileReader
+void print_progressbar(int progress)
 {
-public:
-    explicit FileReader(const std::string& file_path)
+    const auto length = 40;
+    auto completed = static_cast<size_t>((float)length / 100 * progress);
+    std::cout << "\r[" << std::string(completed, '#') << std::string(length - completed, ' ') << "]" << std::flush;
+}
+
+bool intersects(const zinc::Boundary& a, const zinc::Boundary& b)
+{
+    auto a_end = a.start + a.length;
+    auto b_end = b.start + b.length;
+    return (a.start >= b.start && a.start < b_end) || (a_end >= b.start && a_end < b_end);
+}
+
+#if _DEBUG
+/// Ensure that offsets are not overwritten before they are read.
+void verify_operations_list(zinc::SyncOperationList& delta)
+{
+    for (auto i = 0UL; i < delta.size(); i++)
     {
-        _fp = fopen(file_path.c_str(), "rb");
-        if (!_fp)
+        const auto& a = delta[i];                       // earlier spot, source of local data
+        for (auto j = i + 1; j < delta.size(); j++)
         {
-            std::string message = "Could not access file '" + file_path + "'.";
-            throw std::system_error(errno, std::system_category(), message);
+            const auto& b = delta[j];                   // later operation that might copy from earlier spot
+
+            if (b.local != nullptr)
+            {
+                assert(!intersects(*b.local, *a.remote));
+            }
         }
     }
-
-    ~FileReader()
-    {
-        if (_fp)
-            fclose(_fp);
-    }
-
-    zinc::ByteArray get_data(int64_t block_index, size_t block_size)
-    {
-        zinc::ByteArray result;
-        result.resize(block_size);
-        fseek(_fp, block_index * block_size, SEEK_SET);
-        auto size = fread(&result.front(), 1, block_size, _fp);
-        result.resize(size);
-        return result;
-    };
-
-protected:
-    FILE* _fp = nullptr;
-};
-
-size_t suggest_block_size(int64_t file_size)
-{
-    return (size_t)std::max(5 * 1024, std::min(4 * 1024 * 1024, int(file_size / 512)));
 }
-
-void hex_to_bytes(const std::string& input, uint8_t* output)
-{
-    for (unsigned long i = 0; i < input.length() / 2; i++)
-        output[i] = (uint8_t)strtol(input.substr(i * 2, 2).c_str(), nullptr, 16);
-}
-
-std::string pretty_print_size(int64_t bytes)
-{
-    static const char* sizes[] = {"B", "KB", "MB", "GB", "PB"};
-    auto i = 0;
-    while (bytes >= 1024 && i < 5)
-    {
-        bytes /= 1024;
-        i++;
-    }
-    return std::to_string(bytes) + " " + sizes[i];
-}
+#endif
 
 int main(int argc, char* argv[])
 {
-    bool hash_file = false;
-    bool test_mode = false;
     std::string input_file;
     std::string output_file;
+    std::string local_file;
+    std::string remote_url;
+    std::atomic<int64_t> bytes_done{0};
+    int64_t bytes_total = 0;
 
     CLI::App parser{"File synchronization utility."};
-    parser.add_flag("--hash", hash_file, "Build file hashes instead of synchronizing files.");
-    parser.add_flag("--test", test_mode, "Test mode. No files will be written.");
-    parser.add_option("input", input_file, "Input file.")->check(CLI::ExistingFile);
-    parser.add_option("output", output_file, "Output file.");
 
-    if (argc < 2)
+    auto* hash_command = parser.add_subcommand("hash", "Build file hashes instead of synchronizing files.");
+    hash_command->add_option("input", input_file, "Input file (binary).")->check(CLI::ExistingFile);
+    hash_command->add_option("output", output_file, "Output file (json).");
+
+    auto* sync_command = parser.add_subcommand("sync", "Synchronize local file with remote file.");
+    sync_command->add_option("local_file", local_file, "Local file (binary).")->check(CLI::ExistingFile);
+    sync_command->add_option("remote_url", remote_url, "Remote file url.")->check(CLI::ExistingFile);
+
+    CLI11_PARSE(parser, argc, argv);
+
+    if (hash_command->parsed())
     {
+        if (output_file.empty())
+            output_file = input_file + ".json";
+
+        FILE* in = fopen(input_file.c_str(), "rb");
+        auto boundary_future = zinc::partition_file(in, 0, &bytes_done, &bytes_total);
+
+        auto percent_per_byte = 100.f / bytes_total;
+        while (bytes_done < bytes_total)
+            print_progressbar(static_cast<int>(percent_per_byte * bytes_done));
+        print_progressbar(100);
+
+        auto boundaries = boundary_future.get();
+        json doc;
+        for (const auto& block : boundaries)
+        {
+            doc.push_back({
+                {"start", block.start},
+                {"length", block.length},
+                {"fingerprint", block.fingerprint},
+                {"hash", block.hash},
+            });
+        }
+        std::ofstream out(output_file);
+        out << doc.dump(4) << std::endl;
+        fclose(in);
+    }
+    else if (sync_command->parsed())
+    {
+        zinc::BoundaryList local_hashes;
+        zinc::BoundaryList remote_hashes;
+
+        // Hash local file
+        FILE* local = fopen(local_file.c_str(), "rb");
+        auto boundary_future = zinc::partition_file(local, 0, &bytes_done, &bytes_total);
+
+        // Print progress
+        auto percent_per_byte = 100.f / bytes_total;
+        while (bytes_done < bytes_total)
+            print_progressbar(static_cast<int>(percent_per_byte * bytes_done));
+        print_progressbar(100);
+
+        local_hashes = boundary_future.get();
+        fclose(local);
+
+        // Get remote file hashes
+        json doc = json::parse(std::ifstream(remote_url + ".json"));
+        remote_hashes.reserve(doc.size());
+        for (auto& value : doc)
+        {
+            remote_hashes.emplace_back(zinc::Boundary{
+                .start = value["start"].get<int64_t>(),
+                .fingerprint = value["fingerprint"].get<uint64_t>(),
+                .hash = value["hash"].get<uint64_t>(),
+                .length = value["length"].get<int64_t>(),
+            });
+        }
+
+        // Calculate delta
+        auto delta = zinc::compare_files(local_hashes, remote_hashes);
+#if _DEBUG
+        verify_operations_list(delta);
+#endif
+
+        std::ifstream in(remote_url.c_str(), std::ios::binary | std::ios::in);
+        std::fstream out(local_file.c_str(), std::ios::binary | std::ios::in | std::ios::out);
+
+        if (!in.is_open() || !out.is_open())
+        {
+            std::cerr << "Failed to open file\n";
+            return -1;
+        }
+
+        std::vector<char> buffer;
+#if _DEBUG
+        std::vector<char> buffer2;
+        for (const auto& op : delta)
+        {
+            if (op.local != nullptr)
+            {
+                if (buffer.size() < static_cast<size_t>(op.remote->length))
+                    buffer.resize(op.local->length);
+
+                out.seekg(op.local->start, std::ios_base::beg);
+                out.read(&buffer.front(), op.local->length);
+                assert(zinc::detail::fnv64a((uint8_t*)&buffer[0], op.local->length) == op.remote->hash);
+            }
+        }
+#endif
+        int64_t bytes_downloaded = 0;
+        int64_t bytes_copied = 0;
+        for (auto i = 0UL; i < delta.size(); i++)
+        {
+            auto& op = delta[i];
+            if (op.local == nullptr)
+            {
+                // Download operation
+                if (buffer.size() < static_cast<size_t>(op.remote->length))
+                    buffer.resize(op.remote->length);
+
+                in.seekg(op.remote->start, std::ios_base::beg);
+                in.read(&buffer.front(), op.remote->length);
+                bytes_downloaded += op.remote->length;
+
+#if _DEBUG
+                assert(zinc::detail::fnv64a((uint8_t*)&buffer[0], op.remote->length) == op.remote->hash);
+#endif
+            }
+            else
+            {
+                // Copy operation
+                if (buffer.size() < static_cast<size_t>(op.remote->length))
+                    buffer.resize(op.local->length);
+
+                out.seekg(op.local->start, std::ios_base::beg);
+                out.read(&buffer.front(), op.local->length);
+                bytes_copied += op.remote->length;
+
+#if _DEBUG
+                assert(op.local->length == op.remote->length);
+                if (buffer2.size() < static_cast<size_t>(op.remote->length))
+                    buffer2.resize(op.remote->length);
+
+                in.seekg(op.remote->start, std::ios_base::beg);
+                in.read(&buffer2.front(), op.remote->length);
+                assert(memcmp(&buffer[0], &buffer2[0], op.remote->length) == 0);
+#endif
+            }
+
+            out.seekp(op.remote->start, std::ios_base::beg);
+            out.write(&buffer.front(), op.remote->length);
+        }
+
+        in.close();
+        out.close();
+
+        auto file_size = remote_hashes.back().start + remote_hashes.back().length;
+        truncate(local_file.c_str(), file_size);
+
+        std::cout << std::endl;
+        std::cout << "Copied bytes: " << bytes_copied << "\n";
+        std::cout << "Downloaded bytes: " << bytes_downloaded << "\n";
+        std::cout << "Download savings: " << 100 - int(100.0 / file_size * bytes_downloaded) << "%\n";
+    }
+    else
         std::cout << parser.help();
-        return 0;
-    }
-
-    try
-    {
-        parser.parse(argc, argv);
-    }
-    catch (const CLI::ParseError &e)
-    {
-        return parser.exit(e);
-    }
-
-    ProgressBar bar;
-    auto progress_report = [&](int64_t bytes_done_now, int64_t bytes_done_total, int64_t file_size_)
-    {
-        assert(bytes_done_total <= file_size_);
-        bar.update(100.0 / file_size_ * bytes_done_total, bytes_done_total == file_size_);
-        return true;
-    };
-
-    try
-    {
-        if (hash_file)
-        {
-            auto file_size = zinc::get_file_size(input_file.c_str());
-            bar = ProgressBar("Hashing file");
-            auto block_size = suggest_block_size(file_size);
-            auto checksums_task = zinc::get_block_checksums(input_file.c_str(), block_size, std::thread::hardware_concurrency());
-
-            do
-            {
-                std::this_thread::sleep_for(150ms);
-                bar.update(checksums_task->progress(), checksums_task->is_done());
-            } while (!checksums_task->is_done());
-            checksums_task->wait();
-
-            if (!test_mode)
-            {
-                json output;
-                output["file_size"] = file_size;
-                output["block_size"] = block_size;
-                output["blocks"] = {};
-                for (const auto& h: checksums_task->result())
-                    output["blocks"].push_back(json::array({h.weak, zinc::bytes_to_string(h.strong)}));
-
-                if (FILE* fp = fopen(output_file.c_str(), "w+b"))
-                {
-                    auto result = output.dump(4);
-                    fwrite(result.c_str(), 1, result.length(), fp);
-                    fclose(fp);
-                }
-                else
-                {
-                    std::cerr << "Could not open '" << output_file << "' for writing.\n";
-                    return -1;
-                }
-            }
-        }
-        else
-        {
-            // Get hashes from json.
-            json file_manifest = json::parse(std::ifstream(input_file + ".json"));
-            const auto& blocks = file_manifest["blocks"];
-            auto block_size = file_manifest["block_size"].get<size_t>();
-            auto file_size = file_manifest["file_size"].get<int64_t>();
-
-            zinc::RemoteFileHashList hashes;
-            hashes.reserve(blocks.size());
-            for (const auto& block : blocks)
-            {
-                zinc::BlockHashes h;
-                h.weak = block[0].get<zinc::WeakHash>();
-                hex_to_bytes(block[1].get<std::string>(), (uint8_t*)h.strong.data());
-                hashes.push_back(h);
-            }
-
-            bar = ProgressBar("Calculating delta");
-            auto delta_task = zinc::get_differences_delta(output_file.c_str(), block_size, hashes, std::thread::hardware_concurrency());
-            do
-            {
-                std::this_thread::sleep_for(150ms);
-                bar.update(delta_task->progress(), delta_task->is_done());
-            } while (!delta_task->is_done());
-            auto delta = delta_task->wait()->result();
-
-            int64_t bytes_moved = 0;
-            int64_t bytes_downloaded = 0;
-            for (const auto& d : delta.map)
-            {
-                if (d.local_offset == -1)
-                    bytes_downloaded += block_size;
-                else if (d.local_offset != d.block_offset)
-                    bytes_moved += block_size;
-            }
-            std::cout << "Total size:       " << pretty_print_size(file_size) << std::endl;
-            std::cout << "Moved bytes:      " << pretty_print_size(bytes_moved) << std::endl;
-            std::cout << "Downloaded bytes: " << pretty_print_size(bytes_downloaded) << std::endl;
-            std::cout << "Matched bytes:    " << pretty_print_size(file_size - bytes_downloaded - bytes_moved) << std::endl;
-
-            if (!test_mode)
-            {
-                FileReader reader(input_file);
-                bar = ProgressBar("Patching file    ");
-                if (!zinc::patch_file(output_file.c_str(), file_size, block_size, delta,
-                    std::bind(&FileReader::get_data, &reader, _1, _2), progress_report))
-                    std::cerr << "Patching file failed due to unknown error.";
-            }
-        }
-    }
-    catch (std::invalid_argument& e)
-    {
-        std::cerr << e.what();
-        return -1;
-    }
-    catch (std::system_error& e)
-    {
-        std::cerr << e.what() << "(" << e.code() << ")";
-        return -1;
-    }
 
     return 0;
 }
