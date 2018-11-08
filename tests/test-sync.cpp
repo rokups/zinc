@@ -14,6 +14,24 @@ zinc::Parameters get_parameters()
     return p;
 }
 
+#if _WIN32
+FILE* fmemopen(void* data, int len, const char* mode)
+{
+    FILE* file = tmpfile();
+    fwrite(data, 1, len, file);
+    rewind(file);
+    return file;
+}
+
+void fclose(FILE* fp, void* data, size_t len)
+{
+    fflush(fp);
+    rewind(fp);
+    fread(data, 1, len, fp);
+    fclose(fp);
+}
+#endif
+
 bool data_sync_test(std::string old_data, const std::string& new_data)
 {
     auto parameters = get_parameters();
@@ -52,8 +70,13 @@ bool data_sync_test(std::string old_data, const std::string& new_data)
         fwrite(&buffer[0], 1, op.remote->length, old_fp);
     }
 
+#if _WIN32
+    fclose(old_fp, (void*)old_data.data(), old_data.length());
+    fclose(new_fp, (void*)new_data.data(), new_data.length());
+#else
     fclose(old_fp);
     fclose(new_fp);
+#endif
 
     old_data.resize(new_data.size());
     if (old_data == new_data)

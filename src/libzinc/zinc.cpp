@@ -23,6 +23,7 @@
  */
 #if _WIN32
 #   include <windows.h>
+#   include <io.h>
 #else
 #   include <sys/stat.h>
 #   include <unistd.h>
@@ -98,18 +99,30 @@ int64_t get_file_size(FILE* file)
 
 FILE* duplicate_file(FILE* file, const char* access)
 {
+    if (file == nullptr)
+        return nullptr;
+
 #if __linux__
     auto fd = fileno(file);
     char link[32];
     snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
-
-    file = fopen(link, access);
+    return fopen(link, access);
 #elif _WIN32
-#   error TODO
+    if (HANDLE file_handle = reinterpret_cast<HANDLE>(_get_osfhandle(fileno(file))))
+    {
+        FILE_NAME_INFO info{ };
+        if (GetFileInformationByHandleEx(file_handle, FileNameInfo, &info, sizeof(info)))
+        {
+            wchar_t w_access[8];
+            for (int i = 0, end = strlen(access) + 1; i < end; i++)
+                w_access[i] = access[i];
+            return _wfopen(info.FileName, w_access);
+        }
+    }
+    return nullptr;
 #else
 #   error TODO later
 #endif
-    return file;
 }
 
 /// Partition data_length into part_count number of strips. First strip may be longer than the others.
