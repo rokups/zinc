@@ -165,7 +165,7 @@ BoundaryList partition_file_worker(FILE* file, int64_t start_offset, int64_t len
         file = task_file;
 
     std::vector<uint8_t> buffer;
-    buffer.resize(parameters->read_buffer_size);
+    buffer.resize(parameters->read_buffer_size, 0);
     auto sz = buffer.size();
     (void)(sz);
 
@@ -199,7 +199,7 @@ BoundaryList partition_file_worker(FILE* file, int64_t start_offset, int64_t len
             data++;
         }
 
-        auto bytes_consumed = buffer_size - window_length;
+        auto bytes_consumed = buffer_size - std::min<int64_t>(window_length, buffer_size);
 
         progress.consume(bytes_consumed);
 
