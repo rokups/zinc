@@ -30,6 +30,8 @@
 #endif
 #include <unordered_map>
 #include <algorithm>
+#include <functional>
+#include <cassert>
 #include "zinc/zinc.h"
 
 using namespace zinc::detail;
@@ -41,11 +43,59 @@ using ByteArray = std::vector<uint8_t>;
 
 const Parameters default_parameters{};
 
-struct Range
+// Distance for integral types
+template<typename Iter>
+typename std::enable_if<std::is_integral<Iter>::value, long>::type
+distance(Iter start, Iter end) { return end - start; }
+
+// Distance for iterators
+template<typename Iter>
+typename std::enable_if<!std::is_integral<Iter>::value, long>::type
+distance(Iter start, Iter end) { return std::distance(start, end); }
+
+template<typename Iter, typename... Args>
+void parallel_for(Iter start, Iter end, int num_threads, std::function<void(Iter start, Iter end, Args...)> functor, Args... args)
 {
-    int64_t start;
-    int64_t length;
-};
+    if (num_threads == 0)
+        num_threads = std::thread::hardware_concurrency();
+
+    auto total_count = distance(start, end);
+    auto per_thread_count = total_count / num_threads;
+    auto remainder = total_count % num_threads;
+
+    if (num_threads > 0)
+    {
+        // Parallel execution
+        std::vector<std::thread> my_threads(static_cast<unsigned long>(num_threads));
+
+        auto i = 0;
+        for (; i < num_threads - 1; i++)
+        {
+            int part_start = start + i * per_thread_count;
+            my_threads[i] = std::thread(functor, part_start, part_start + per_thread_count, args...);
+        }
+
+        // Last thread handles remainder as well
+        int part_start = start + i * per_thread_count;
+        my_threads[i] = std::thread(functor, part_start, part_start + per_thread_count + remainder, args...);
+
+        std::for_each(my_threads.begin(), my_threads.end(), std::mem_fn(&std::thread::join));
+    }
+    else
+    {
+        // Sequential execution (pass -1 for number of threads)
+        auto i = 0;
+        for (; i < num_threads - 1; i++)
+        {
+            int part_start = start + i * per_thread_count;
+            functor(part_start, part_start + per_thread_count, args...);
+        }
+
+        // Last thread handles remainder as well
+        int part_start = start + i * per_thread_count;
+        functor(part_start, part_start + per_thread_count + remainder, args...);
+    }
+}
 
 /// Tracks progress reporting when range of bytes needs to be processed multiple times.
 struct DividedProgress
@@ -104,9 +154,17 @@ FILE* duplicate_file(FILE* file, const char* access)
 
 #if __linux__
     auto fd = fileno(file);
-    char link[32];
-    snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
-    return fopen(link, access);
+    if (fd < 0)
+    {
+        // Chances are we are dealing with handle from fmemopen()
+        return fmemopen(file->_IO_buf_base, (uintptr_t)file->_IO_buf_end - (uintptr_t)file->_IO_buf_base, access);
+    }
+    else
+    {
+        char link[32];
+        snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+        return fopen(link, access);
+    }
 #elif _WIN32
     if (HANDLE file_handle = reinterpret_cast<HANDLE>(_get_osfhandle(fileno(file))))
     {
@@ -125,157 +183,23 @@ FILE* duplicate_file(FILE* file, const char* access)
 #endif
 }
 
-/// Partition data_length into part_count number of strips. First strip may be longer than the others.
-std::vector<Range> partition_data(size_t part_count, int64_t data_length, int64_t min_part_length = 1)
-{
-    std::vector<Range> result;
-
-    if (data_length < static_cast<int64_t>(part_count))
-        part_count = static_cast<size_t>(data_length);
-
-    int64_t avg_length = std::max<int64_t>(data_length / part_count, min_part_length);
-    result.reserve(part_count);
-
-    auto prev_offset = 0L;
-    while (part_count > 0)
-    {
-        part_count--;
-        auto length = data_length - prev_offset;
-        if (part_count > 0)
-            length = std::min(length, avg_length);
-        if (length == 0)
-            break;
-        result.emplace_back(Range{.start = prev_offset, .length = length});
-        prev_offset += length;
-    }
-    return result;
-}
-
 //////////////////////////////////////////////// file partitioning /////////////////////////////////////////////////////
-
-BoundaryList partition_file_worker(FILE* file, int64_t start_offset, int64_t length, DividedProgress& progress,
-    std::atomic<bool>* cancel, const Parameters* parameters)
-{
-    BoundaryList result;
-    if (!file)
-        return result;
-
-    FILE* task_file = duplicate_file(file, "rb");
-    if (task_file != nullptr)
-        file = task_file;
-
-    std::vector<uint8_t> buffer;
-    buffer.resize(parameters->read_buffer_size, 0);
-    auto sz = buffer.size();
-    (void)(sz);
-
-    const auto mask = (1U << parameters->match_bits) - 1U;
-    auto buffer_size = std::min<int64_t>(length, parameters->read_buffer_size);
-
-    fseek(file, start_offset, SEEK_SET);
-    int64_t read = fread(&buffer[0], 1, static_cast<size_t>(buffer_size), file);
-    if (read != buffer_size)
-    {
-        fclose(file);
-        return result;
-    }
-
-    auto* data = &buffer[0];
-    auto* data_start = data;
-    auto window_length = parameters->window_length;
-    auto fingerprint = buzhash(data, window_length);
-
-    do
-    {
-        for (auto* end = data_start + buffer_size - window_length; data < end;)
-        {
-            if ((fingerprint & mask) == 0)
-            {
-                auto block_start = start_offset + (data - data_start);
-                result.emplace_back(Boundary{.start = block_start, .fingerprint = fingerprint, .hash = 0, .length = 0});
-            }
-
-            fingerprint = buzhash_update(fingerprint, data[0], data[window_length], window_length);
-            data++;
-        }
-
-        auto bytes_consumed = buffer_size - std::min<int64_t>(window_length, buffer_size);
-
-        progress.consume(bytes_consumed);
-
-        length -= bytes_consumed;
-        start_offset += bytes_consumed;
-
-        if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
-        {
-            fclose(file);
-            return {};
-        }
-
-        buffer_size = std::min<int64_t>(length, parameters->read_buffer_size);
-        fseek(file, start_offset, SEEK_SET);
-        read = fread(&buffer[0], 1, static_cast<size_t>(buffer_size), file);
-        if (read != buffer_size)
-        {
-            fclose(file);
-            return {};
-        }
-        data = data_start;
-    } while (length > window_length);
-
-    progress.consume(length);
-
-    if (task_file != nullptr)
-        fclose(task_file);
-
-    return result;
-}
-
-bool compute_hashes_worker(FILE* file, BoundaryList& result, int64_t item_start, int64_t item_count,
-    std::atomic<bool>* cancel, DividedProgress& progress)
-{
-    if (!file)
-        return false;
-
-    FILE* task_file = duplicate_file(file, "rb");
-    if (task_file != nullptr)
-        file = task_file;
-
-    std::vector<uint8_t> buffer;
-    for (auto i = item_start, end = item_start + item_count; i < end; i++)
-    {
-        auto& block = result[i];
-        fseek(file, block.start, SEEK_SET);
-        if (buffer.size() < static_cast<size_t>(block.length))
-            buffer.resize(static_cast<size_t>(block.length));
-
-        auto len = fread(&buffer[0], 1, static_cast<size_t>(block.length), file);
-        block.hash = fnv64a(&buffer[0], len);
-        progress.consume(block.length);
-        if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
-        {
-            fclose(file);
-            return false;
-        }
-    }
-
-    if (task_file != nullptr)
-        fclose(task_file);
-
-    return true;
-}
 
 BoundaryList partition_file_task(FILE* file, size_t max_threads, std::atomic<int64_t>* bytes_done,
     std::atomic<bool>* cancel, const Parameters* parameters)
 {
-    if (max_threads == 0)
-        max_threads = std::thread::hardware_concurrency();
-    max_threads = std::max<size_t>(max_threads, 1);
-
     if (!file)
         return {};
 
     auto file_size = get_file_size(file);
+
+    if (max_threads == 0)
+        max_threads = std::thread::hardware_concurrency();
+    max_threads = std::max<size_t>(max_threads, 1);
+    if (static_cast<unsigned long long>(file_size) < max_threads * parameters->window_length)
+        // This is a very tiny file, no poing in many threads.
+        max_threads = 1;
+
     BoundaryList result;
     result.resize(1);                                               // File start always contains a fake split point.
 
@@ -283,19 +207,85 @@ BoundaryList partition_file_task(FILE* file, size_t max_threads, std::atomic<int
 
     // Partition file
     {
-        std::vector<std::future<BoundaryList>> tasks;
-        for (auto range : partition_data(max_threads, file_size, parameters->window_length))
+        std::mutex result_lock{};
+        std::function<void(int64_t, int64_t, FILE*)> worker([&](int64_t start_offset, int64_t end_offset, FILE* wfile)
         {
-            tasks.emplace_back(std::async(std::launch::async, &partition_file_worker, file,
-                range.start, range.length, std::ref(progress), cancel, parameters));
-        }
+            BoundaryList local_result;
+            wfile = duplicate_file(wfile, "rb");
+            assert(wfile);
 
-        // Gather worker results
-        for (auto& task : tasks)
-        {
-            auto task_result = task.get();
-            result.insert(result.end(), task_result.begin(), task_result.end());
-        }
+            int64_t length = end_offset - start_offset;
+            std::vector<uint8_t> buffer;
+            buffer.resize(parameters->read_buffer_size, 0);
+            auto sz = buffer.size();
+            (void)(sz);
+
+            const auto mask = (1U << parameters->match_bits) - 1U;
+            auto buffer_size = std::min<int64_t>(length, parameters->read_buffer_size);
+
+            fseek(wfile, start_offset, SEEK_SET);
+            int64_t read = fread(&buffer[0], 1, static_cast<size_t>(buffer_size), wfile);
+            if (read != buffer_size)
+            {
+                fclose(wfile);
+                return;
+            }
+
+            auto* data = &buffer[0];
+            auto* data_start = data;
+            auto window_length = parameters->window_length;
+            auto fingerprint = buzhash(data, window_length);
+
+            do
+            {
+                for (auto* end = data_start + buffer_size - window_length; data < end;)
+                {
+                    if ((fingerprint & mask) == 0)
+                    {
+                        auto block_start = start_offset + (data - data_start);
+                        local_result.emplace_back(Boundary{.start = block_start, .fingerprint = fingerprint, .hash = 0, .length = 0});
+                    }
+
+                    fingerprint = buzhash_update(fingerprint, data[0], data[window_length], window_length);
+                    data++;
+                }
+
+                auto bytes_consumed = buffer_size - std::min<int64_t>(window_length, buffer_size);
+
+                progress.consume(bytes_consumed);
+
+                length -= bytes_consumed;
+                start_offset += bytes_consumed;
+
+                if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
+                {
+                    fclose(wfile);
+                    return;
+                }
+
+                buffer_size = std::min<int64_t>(length, parameters->read_buffer_size);
+                fseek(wfile, start_offset, SEEK_SET);
+                read = fread(&buffer[0], 1, static_cast<size_t>(buffer_size), wfile);
+                if (read != buffer_size)
+                {
+                    fclose(wfile);
+                    return;
+                }
+                data = data_start;
+            } while (length > window_length);
+
+            progress.consume(length);
+
+            fclose(wfile);
+
+            // Insert results to main collection. This is done at the end in order to reduce contention on result_lock.
+            result_lock.lock();
+            result.insert(result.end(), local_result.begin(), local_result.end());
+            result_lock.unlock();
+        });
+        parallel_for(0L, file_size, (int)max_threads, worker, file);
+        // Results were appended out of order. We need them sorted.
+        std::sort(result.begin(), result.end(), [](const Boundary& a, const Boundary& b) { return a.start < b.start; });
     }
 
     if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
@@ -370,17 +360,32 @@ BoundaryList partition_file_task(FILE* file, size_t max_threads, std::atomic<int
         block.length = next_block_start - block.start;
     }
 
-    // Calculate strong hashes for blocks
-    std::vector<std::future<bool>> tasks;
-    for (auto range : partition_data(max_threads, result.size()))
+    parallel_for(0UL, result.size(), (int)max_threads, std::function<void(unsigned long, unsigned long, FILE*)>(
+        [&](unsigned long item_start, unsigned long item_end, FILE* wfile)
     {
-        tasks.emplace_back(std::async(std::launch::async, &compute_hashes_worker, file, std::ref(result),
-            range.start, range.length, cancel, std::ref(progress)));
-    }
+        wfile = duplicate_file(wfile, "rb");
+        assert(wfile);
 
-    // Finish hashing tasks
-    for (auto& task : tasks)
-        task.get();
+        std::vector<uint8_t> wbuffer;
+        for (auto i = item_start; i < item_end; i++)
+        {
+            auto& block = result[i];
+            fseek(wfile, block.start, SEEK_SET);
+            if (wbuffer.size() < static_cast<size_t>(block.length))
+                wbuffer.resize(static_cast<size_t>(block.length));
+
+            auto len = fread(&wbuffer[0], 1, static_cast<size_t>(block.length), wfile);
+            block.hash = fnv64a(&wbuffer[0], len);
+            progress.consume(block.length);
+            if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
+            {
+                fclose(wfile);
+                break;
+            }
+        }
+
+        fclose(wfile);
+    }), file);
 
     progress.flush();
 
